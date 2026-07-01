@@ -52,6 +52,22 @@ private let userMmapFloor: UInt = 0x1_0000_0000 // heap/mmap boundary; arena gro
 // docs/RISK_REMEDIATION_ROADMAP.md.
 let kMaxProcesses = 64
 private let maxProc = kMaxProcesses
+
+// PT2a: keep the fixed backing arrays for now, but route all process-slot
+// validation and full-table scans through this narrow boundary. The next PT
+// steps can grow or replace the storage without rediscovering every `maxProc`
+// check in the scheduler/syscall/accounting paths.
+@inline(__always)
+private func processSlotCapacity() -> Int { maxProc }
+
+@inline(__always)
+private func processSlotRange() -> Range<Int> { 0..<processSlotCapacity() }
+
+@inline(__always)
+private func processSlotValid(_ slot: Int) -> Bool {
+    slot >= 0 && slot < processSlotCapacity()
+}
+
 private let procNameMax = 16
 private let psInfoRecordSize = 32
 private let procStatRecordSize = 56 // richer per-process record for /bin/top
@@ -401,7 +417,7 @@ func processInit() {
         }
         cpu += 1
     }
-    for i in 0..<maxProc {
+    for i in processSlotRange() {
         pState[i] = pUnused
         pHomeCpu[i] = unassignedCpu
         pRunNext[i] = noProcessSlot
@@ -597,42 +613,42 @@ private func currentProcessSlot() -> Int {
 }
 
 private func clearSignalFrameState(_ slot: Int) {
-    if slot < 0 || slot >= maxProc { return }
+    if !processSlotValid(slot) { return }
     pSignalFrameActive[slot] = false
     pSignalFrameSP[slot] = 0
 }
 
 // --- per-process pending signals (HC36) ---------------------------------------
 // Storage lives here (next to the rest of the per-slot process state and the
-// only place that knows maxProc); signal.swift drives policy through these.
+// process-slot boundary); signal.swift drives policy through these.
 
 /// Mark `sig` pending for process `slot`. No-op for an invalid slot or signo.
 func processSignalMarkPending(_ slot: Int, _ sig: Int) {
-    guard slot >= 0 && slot < maxProc, sig > 0 && sig < 32 else { return }
+    guard processSlotValid(slot), sig > 0 && sig < 32 else { return }
     pPendingSignals[slot] |= (UInt32(1) << UInt32(sig))
 }
 
 /// Clear the pending bit for `sig` on process `slot`.
 func processSignalClearPending(_ slot: Int, _ sig: Int) {
-    guard slot >= 0 && slot < maxProc, sig > 0 && sig < 32 else { return }
+    guard processSlotValid(slot), sig > 0 && sig < 32 else { return }
     pPendingSignals[slot] &= ~(UInt32(1) << UInt32(sig))
 }
 
 /// True if `sig` is pending for process `slot`.
 func processSignalIsPending(_ slot: Int, _ sig: Int) -> Bool {
-    guard slot >= 0 && slot < maxProc, sig > 0 && sig < 32 else { return false }
+    guard processSlotValid(slot), sig > 0 && sig < 32 else { return false }
     return (pPendingSignals[slot] & (UInt32(1) << UInt32(sig))) != 0
 }
 
 /// True if any signal is pending for process `slot`.
 func processSignalHasPending(_ slot: Int) -> Bool {
-    guard slot >= 0 && slot < maxProc else { return false }
+    guard processSlotValid(slot) else { return false }
     return pPendingSignals[slot] != 0
 }
 
 /// Drop all pending signals for `slot` (fork child / exec / fresh slot).
 func processSignalClearAllPending(_ slot: Int) {
-    guard slot >= 0 && slot < maxProc else { return }
+    guard processSlotValid(slot) else { return }
     pPendingSignals[slot] = 0
 }
 
@@ -812,7 +828,7 @@ private func processMirrorRunQueueForCpu(_ cpu: UInt32) {
 }
 
 private func processHomeCpuForNewReadySlot(_ slot: Int) -> UInt32 {
-    if slot < 0 || slot >= maxProc { return unassignedCpu }
+    if !processSlotValid(slot) { return unassignedCpu }
     if s5fRunAnyPlacementActive {
         return processNextS5fRunAnyHomeCpu()
     }
@@ -823,7 +839,7 @@ private func processHomeCpuForNewReadySlot(_ slot: Int) -> UInt32 {
 }
 
 private func clearProcessSchedulerSlot(_ slot: Int) {
-    if slot < 0 || slot >= maxProc { return }
+    if !processSlotValid(slot) { return }
     pHomeCpu[slot] = unassignedCpu
     pRunNext[slot] = noProcessSlot
     pRunQueued[slot] = false
@@ -834,7 +850,7 @@ private func clearProcessSchedulerSlot(_ slot: Int) {
 }
 
 private func removeProcessFromRunQueue(_ slot: Int) {
-    if slot < 0 || slot >= maxProc || !pRunQueued[slot] { return }
+    if !processSlotValid(slot) || !pRunQueued[slot] { return }
     let cpu = pHomeCpu[slot]
     if !processValidSchedulerCpu(cpu) {
         uartPuts("panic: invalid EL0 process run queue removal CPU\n")
@@ -871,7 +887,7 @@ private func removeProcessFromRunQueue(_ slot: Int) {
 }
 
 private func recordProcessDispatch(_ slot: Int, on cpu: UInt32) {
-    if slot < 0 || slot >= maxProc || !processValidSchedulerCpu(cpu) {
+    if !processSlotValid(slot) || !processValidSchedulerCpu(cpu) {
         uartPuts("panic: invalid EL0 process dispatch telemetry target\n")
         while true {}
     }
@@ -890,7 +906,7 @@ private func recordProcessDispatch(_ slot: Int, on cpu: UInt32) {
 }
 
 private func recordProcessAddressSpaceActivation(_ slot: Int, on cpu: UInt32) {
-    if slot < 0 || slot >= maxProc || !processValidSchedulerCpu(cpu) || pTtbr0[slot] == 0 {
+    if !processSlotValid(slot) || !processValidSchedulerCpu(cpu) || pTtbr0[slot] == 0 {
         uartPuts("panic: invalid address-space CPU mask target\n")
         while true {}
     }
@@ -908,7 +924,7 @@ private func recordProcessAddressSpaceActivation(_ slot: Int, on cpu: UInt32) {
 
 private func processAddressSpaceActiveCpuMaskForSlot(_ slot: Int) -> UInt64 {
     let currentMask = addressSpaceCurrentCpuTlbMask()
-    if slot < 0 || slot >= maxProc { return currentMask }
+    if !processSlotValid(slot) { return currentMask }
 
     var mask = pAddressSpaceCpuMask[slot]
     if slot == currentProcessSlot() {
@@ -924,7 +940,7 @@ func processCurrentAddressSpaceActiveCpuMask() -> UInt64 {
 }
 
 private func captureLastPairDispatchTelemetry(_ a: Int, _ b: Int) {
-    if a < 0 || a >= maxProc || b < 0 || b >= maxProc {
+    if !processSlotValid(a) || !processSlotValid(b) {
         lastPairDispatchTelemetryValid = false
         return
     }
@@ -938,7 +954,7 @@ private func captureLastPairDispatchTelemetry(_ a: Int, _ b: Int) {
 }
 
 private func captureLastS5bBatchDispatchTelemetry(_ a: Int, _ b: Int, _ c: Int) {
-    if a < 0 || a >= maxProc || b < 0 || b >= maxProc || c < 0 || c >= maxProc {
+    if !processSlotValid(a) || !processSlotValid(b) || !processSlotValid(c) {
         lastS5bBatchDispatchTelemetryValid = false
         return
     }
@@ -1034,8 +1050,8 @@ private func recordS5eThreadCreate(creator: Int, slot: Int, homeCpu: UInt32) {
     if !s5eThreadPlacementActive { return }
     let daif = processS5eThreadTelemetryLock()
     lastS5eThreadCreateCount &+= 1
-    if creator >= 0 && creator < maxProc &&
-       slot >= 0 && slot < maxProc &&
+    if processSlotValid(creator) &&
+       processSlotValid(slot) &&
        pTtbr0[slot] == pTtbr0[creator] {
         lastS5eThreadSharedAddressSpaceCount &+= 1
     }
@@ -1047,7 +1063,7 @@ private func recordS5eThreadCreate(creator: Int, slot: Int, homeCpu: UInt32) {
 }
 
 private func recordS5eThreadExit(_ slot: Int) {
-    if !s5eThreadPlacementActive || slot < 0 || slot >= maxProc { return }
+    if !s5eThreadPlacementActive || !processSlotValid(slot) { return }
     let daif = processS5eThreadTelemetryLock()
     let home = pHomeCpu[slot]
     let homeMask = processCpuBit(home)
@@ -1093,7 +1109,7 @@ private func resetLastS5fRunAnyTelemetry() {
     lastS5fRunAnyExitOkCount = 0
     s5fRunAnyPlacementActive = false
     s5fNextPlacementCpu = 0
-    for slot in 0..<maxProc {
+    for slot in processSlotRange() {
         s5fRunAnySlots[slot] = -1
     }
 }
@@ -1142,7 +1158,7 @@ private func captureLastS5fRunAnyTelemetry(processCount: UInt64,
 }
 
 private func markProcessReady(_ slot: Int, cpu: UInt32) {
-    if slot < 0 || slot >= maxProc || !processValidSchedulerCpu(cpu) {
+    if !processSlotValid(slot) || !processValidSchedulerCpu(cpu) {
         uartPuts("panic: invalid EL0 process run queue target\n")
         while true {}
     }
@@ -1164,7 +1180,7 @@ private func markProcessReady(_ slot: Int, cpu: UInt32) {
     pRunNext[slot] = noProcessSlot
     if tail == noProcessSlot {
         processRunQueueHead[idx] = Int32(slot)
-    } else if tail >= 0 && tail < Int32(maxProc) {
+    } else if processSlotValid(Int(tail)) {
         pRunNext[Int(tail)] = Int32(slot)
     } else {
         processRunQueueUnlock(cpu, daif)
@@ -1183,7 +1199,7 @@ private func markProcessReady(_ slot: Int, cpu: UInt32) {
 }
 
 private func markProcessReadyOnHomeCpu(_ slot: Int) {
-    if slot < 0 || slot >= maxProc { return }
+    if !processSlotValid(slot) { return }
     let home = pHomeCpu[slot] == unassignedCpu ? processHomeCpuForNewReadySlot(slot) : pHomeCpu[slot]
     markProcessReady(slot, cpu: home)
 }
@@ -1343,7 +1359,7 @@ func processDispatchTelemetrySelfTest() -> Bool {
     if s5fRunAnyPlacementActive || s5fNextPlacementCpu != 0 {
         return false
     }
-    for slot in 0..<maxProc {
+    for slot in processSlotRange() {
         if s5fRunAnySlots[slot] != -1 { return false }
     }
     var cpu: UInt32 = 0
@@ -1353,7 +1369,7 @@ func processDispatchTelemetrySelfTest() -> Bool {
         if smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
         cpu += 1
     }
-    for slot in 0..<maxProc {
+    for slot in processSlotRange() {
         if pLastDispatchCpu[slot] != unassignedCpu { return false }
         if pDispatchCount[slot] != 0 { return false }
         if pDispatchCpuMask[slot] != 0 { return false }
@@ -1367,14 +1383,14 @@ func processSecondaryEl0GateSelfTest() -> Bool {
     if !processSecondaryEl0GateAllowsCpu(0) { return false }
     if processSecondaryEl0GateAllowsCpu(smpMaxCpuCount()) { return false }
     if processHomeCpuForNewReadySlot(-1) != unassignedCpu { return false }
-    if processHomeCpuForNewReadySlot(maxProc) != unassignedCpu { return false }
+    if processHomeCpuForNewReadySlot(processSlotCapacity()) != unassignedCpu { return false }
 
     var cpu: UInt32 = 1
     while cpu < processRunQueueCpuCount {
         if processSecondaryEl0GateAllowsCpu(cpu) { return false }
         cpu += 1
     }
-    for slot in 0..<maxProc {
+    for slot in processSlotRange() {
         if processHomeCpuForNewReadySlot(slot) != 0 { return false }
     }
     return true
@@ -1405,7 +1421,7 @@ func processAddressSpaceCpuMaskSelfTest() -> Bool {
         if processAddressSpaceActivationCount[Int(cpu)] != 0 { return false }
         cpu += 1
     }
-    for slot in 0..<maxProc {
+    for slot in processSlotRange() {
         if pAddressSpaceCpuMask[slot] != 0 { return false }
     }
     return true
@@ -1437,7 +1453,7 @@ func processAddressSpaceCpuMaskPostRunSelfTest() -> Bool {
     if !sawPrimaryActivation { return false }
     if platform.cpuCount > 1 && !sawSecondaryActivation { return false }
 
-    for slot in 0..<maxProc {
+    for slot in processSlotRange() {
         if pState[slot] == pUnused {
             if pAddressSpaceCpuMask[slot] != 0 { return false }
         } else if (pAddressSpaceCpuMask[slot] & ~pDispatchCpuMask[slot]) != 0 {
@@ -2053,7 +2069,7 @@ func processAddressSpaceTlbFlushFacadeSelfTest() -> Bool {
 func processAddressSpaceTlbFlushPostRunSelfTest() -> Bool {
     let primary = currentCpuId()
     if primary != 0 || !processValidSchedulerCpu(primary) { return false }
-    for slot in 0..<maxProc {
+    for slot in processSlotRange() {
         if pState[slot] == pUnused { continue }
         if (processAddressSpaceActiveCpuMaskForSlot(slot) & ~pDispatchCpuMask[slot]) != 0 {
             return false
@@ -2098,7 +2114,7 @@ func processDispatchTelemetryNoSecondarySelfTest() -> Bool {
         return false
     }
 
-    for slot in 0..<maxProc {
+    for slot in processSlotRange() {
         if pDispatchCount[slot] == 0 {
             if pLastDispatchCpu[slot] != unassignedCpu { return false }
             if pDispatchCpuMask[slot] != 0 { return false }
@@ -2147,12 +2163,12 @@ func packArgs(_ args: [StaticString]) -> (UInt, UInt, Int) {
 }
 
 private func allocSlot() -> Int {
-    for i in 0..<maxProc where pState[i] == pUnused && pSchedulerQuiesced[i] { return i }
+    for i in processSlotRange() where pState[i] == pUnused && pSchedulerQuiesced[i] { return i }
     return -1
 }
 
 private func setProcessName(slot: Int, packed: UInt, argc: Int) {
-    if slot < 0 || slot >= maxProc { return }
+    if !processSlotValid(slot) { return }
     let base = slot * procNameMax
     for i in 0..<procNameMax { pName[base + i] = 0 }
     pNameLen[slot] = 0
@@ -2177,7 +2193,7 @@ private func setProcessName(slot: Int, packed: UInt, argc: Int) {
 }
 
 private func copyProcessName(from parent: Int, to child: Int) {
-    if parent < 0 || parent >= maxProc || child < 0 || child >= maxProc { return }
+    if !processSlotValid(parent) || !processSlotValid(child) { return }
     let src = parent * procNameMax
     let dst = child * procNameMax
     for i in 0..<procNameMax { pName[dst + i] = pName[src + i] }
@@ -2185,8 +2201,8 @@ private func copyProcessName(from parent: Int, to child: Int) {
 }
 
 private func setProcessSecurity(slot: Int, parent: Int) {
-    if slot < 0 || slot >= maxProc { return }
-    if parent >= 0 && parent < maxProc {
+    if !processSlotValid(slot) { return }
+    if processSlotValid(parent) {
         pSecurity[slot] = pSecurity[parent]
         return
     }
@@ -2194,7 +2210,7 @@ private func setProcessSecurity(slot: Int, parent: Int) {
 }
 
 private func copyProcessSecurity(from parent: Int, to child: Int) {
-    if parent < 0 || parent >= maxProc || child < 0 || child >= maxProc { return }
+    if !processSlotValid(parent) || !processSlotValid(child) { return }
     pSecurity[child] = pSecurity[parent] // whole context, including the Cell tag
 }
 
@@ -2359,7 +2375,7 @@ private func wakeParent(of slot: Int) {
 /// and kernel stack are quiescent; address_space_destroy switches off the
 /// doomed TTBR0 first if it happens to be the one currently installed.
 private func reapProcess(_ slot: Int) {
-    if slot < 0 || slot >= maxProc { return }
+    if !processSlotValid(slot) { return }
     if !pSchedulerQuiesced[slot] {
         uartPuts("panic: reapProcess before scheduler quiescence\n")
         while true {}
@@ -2386,11 +2402,11 @@ private func reapProcess(_ slot: Int) {
     // quiesced is an orphan nobody will ever waitpid() — reap it directly here
     // rather than leak its zombie slot. Re-scan after every reap because reaping
     // a child can reparent (and recursively reap) its own descendants, mutating
-    // pParent under us; the scan is bounded by the live-tree depth (<= maxProc).
+    // pParent under us; the scan is bounded by the live-tree depth (<= slot capacity).
     var collected = true
     while collected {
         collected = false
-        for i in 0..<maxProc
+        for i in processSlotRange()
         where pParent[i] == slot && pState[i] == pZombie && pSchedulerQuiesced[i] {
             reapProcess(i)
             collected = true
@@ -2398,7 +2414,7 @@ private func reapProcess(_ slot: Int) {
     }
     // Any still-live children become kernel orphans. Flag them so a later exit is
     // collected by the in-scheduler reaper (nobody waitpid()s a -1 parent).
-    for i in 0..<maxProc where pParent[i] == slot {
+    for i in processSlotRange() where pParent[i] == slot {
         pParent[i] = -1
         pReparentedOrphan[i] = true
     }
@@ -2479,7 +2495,7 @@ func processRunElf(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, a
 /// (state != pUnused). Used by the QW3 orphan-reap self-test (no ABI surface).
 func processLiveSlotCount() -> Int {
     var n = 0
-    for i in 0..<maxProc where pState[i] != pUnused { n += 1 }
+    for i in processSlotRange() where pState[i] != pUnused { n += 1 }
     return n
 }
 
@@ -2837,7 +2853,7 @@ func processRunS5fRunAnyPlacement(_ image: UInt, _ size: UInt,
     }
 
     var processCount = Int(platform.cpuCount) + 2
-    if processCount > maxProc { processCount = maxProc }
+    if processCount > processSlotCapacity() { processCount = processSlotCapacity() }
     if processCount < 1 { processCount = 1 }
     s5fRunAnyPlacementActive = true
     s5fNextPlacementCpu = primary
@@ -3197,7 +3213,7 @@ func processYieldAfterPreparedFutexBlock() {
 
 /// FUTEX_WAKE backend: mark a futex-blocked thread runnable again.
 func processWakeFromFutex(_ slot: Int) {
-    if slot < 0 || slot >= maxProc { return }
+    if !processSlotValid(slot) { return }
     if pState[slot] == pBlocked { markProcessReadyOnHomeCpu(slot) }
 }
 
@@ -3234,7 +3250,7 @@ func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
     while true {
         var found = -1
         var live = 0
-        for i in 0..<maxProc where pState[i] != pUnused && pParent[i] == parent {
+        for i in processSlotRange() where pState[i] != pUnused && pParent[i] == parent {
             if wantSlot != waitAny && i != wantSlot { continue }
             live += 1
             if pState[i] == pZombie && pSchedulerQuiesced[i] { found = i; break }
@@ -3267,7 +3283,7 @@ func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
 func processInstallSignalFrame(sig: Int, handler: UInt, restorer: UInt,
                                frame: UnsafeMutablePointer<UInt>) -> Bool {
     let me = currentProcessSlot()
-    if me < 0 || me >= maxProc { return false }
+    if !processSlotValid(me) { return false }
     if pSignalFrameActive[me] { return false }
     if handler == SIG_DFL || handler == SIG_IGN || restorer == 0 { return false }
 
@@ -3299,7 +3315,7 @@ func processInstallSignalFrame(sig: Int, handler: UInt, restorer: UInt,
 
 func processSignalReturn(_ frame: UnsafeMutablePointer<UInt>) {
     let me = currentProcessSlot()
-    guard me >= 0 && me < maxProc && pSignalFrameActive[me] else {
+    guard processSlotValid(me) && pSignalFrameActive[me] else {
         processTerminateBySignal(SIGSEGV)
         return
     }
@@ -3328,7 +3344,7 @@ func processKill(_ pid: Int, _ sig: Int) -> Int {
     if !signalIsValid(sig) && sig != 0 { return Errno.invalid.code } // EINVAL
     if pid <= 0 { return Errno.invalid.code } // process groups are not modeled yet
     let slot = pid - 1
-    if slot < 0 || slot >= maxProc || pState[slot] == pUnused { return Errno.srch.code } // ESRCH
+    if !processSlotValid(slot) || pState[slot] == pUnused { return Errno.srch.code } // ESRCH
     if sig == 0 { return 0 }
     if signalDisposition(sig) == SIG_IGN { return 0 }
 
@@ -3417,13 +3433,13 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
 /// Record layout (32 bytes): pid:u32, ppid:u32, state:u32, name[20].
 func processSnapshot(buffer: UInt, capacity: UInt) -> Int {
     var total = 0
-    let writable = capacity > UInt(maxProc) ? maxProc : Int(capacity)
+    let writable = capacity > UInt(processSlotCapacity()) ? processSlotCapacity() : Int(capacity)
     if writable > 0 {
         guard let dst = userWritableBuffer(buffer, UInt(writable * psInfoRecordSize)) else {
             return Errno.invalid.code
         }
         let raw = UnsafeMutableRawPointer(dst)
-        for i in 0..<maxProc where pState[i] != pUnused {
+        for i in processSlotRange() where pState[i] != pUnused {
             if total < writable {
                 let rec = raw.advanced(by: total * psInfoRecordSize)
                 let ppid = pParent[i] >= 0 ? UInt32(pParent[i] + 1) : UInt32(0)
@@ -3442,7 +3458,7 @@ func processSnapshot(buffer: UInt, capacity: UInt) -> Int {
             total += 1
         }
     } else {
-        for i in 0..<maxProc where pState[i] != pUnused { total += 1 }
+        for i in processSlotRange() where pState[i] != pUnused { total += 1 }
     }
     return total
 }
@@ -3452,14 +3468,14 @@ func processSnapshot(buffer: UInt, capacity: UInt) -> Int {
 /// principal:u32, cpuTicks:u64, startTick:u64, resBytes:u64, name[16].
 func processStatSnapshot(buffer: UInt, capacity: UInt) -> Int {
     var total = 0
-    let writable = capacity > UInt(maxProc) ? maxProc : Int(capacity)
+    let writable = capacity > UInt(processSlotCapacity()) ? processSlotCapacity() : Int(capacity)
     if writable > 0 {
         guard let dst = userWritableBuffer(buffer, UInt(writable * procStatRecordSize)) else {
             return Errno.invalid.code
         }
         let raw = UnsafeMutableRawPointer(dst)
         let frameBytes = UInt64(PageAllocator.pageSize)
-        for i in 0..<maxProc where pState[i] != pUnused {
+        for i in processSlotRange() where pState[i] != pUnused {
             if total < writable {
                 let rec = raw.advanced(by: total * procStatRecordSize)
                 let ppid = pParent[i] >= 0 ? UInt32(pParent[i] + 1) : UInt32(0)
@@ -3482,7 +3498,7 @@ func processStatSnapshot(buffer: UInt, capacity: UInt) -> Int {
             total += 1
         }
     } else {
-        for i in 0..<maxProc where pState[i] != pUnused { total += 1 }
+        for i in processSlotRange() where pState[i] != pUnused { total += 1 }
     }
     return total
 }
@@ -3510,7 +3526,7 @@ func processCellStat(cell rawCell: UInt32, buffer: UInt, capacity: UInt) -> Int 
     var residentPages: UInt64 = 0
     var cpuTicks: UInt64 = 0
     var handles: UInt32 = 0
-    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == rawCell {
+    for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == rawCell {
         processes += 1
         residentPages &+= UInt64(pResPages[i])
         cpuTicks &+= pCpuTicks[i]
@@ -3530,7 +3546,7 @@ func processCellStat(cell rawCell: UInt32, buffer: UInt, capacity: UInt) -> Int 
 /// bounded scan keyed on the CellId tag, like processCellStat (no per-cell counter).
 func processCellResidentPages(_ cellRaw: UInt32) -> Int {
     var pages = 0
-    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
+    for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
         pages += pResPages[i]
     }
     return pages
@@ -3561,7 +3577,7 @@ func processCellGrowthAllowed(_ slot: Int, addPages: Int) -> Bool {
 /// slot). The VFS handle-cap guard uses this to find the cell a handle-allocating
 /// process belongs to. VFS process index == kernel process slot (see processCellStat).
 func processCellRawForSlot(_ slot: Int) -> UInt32 {
-    if slot < 0 || slot >= maxProc { return globalCell.raw }
+    if !processSlotValid(slot) { return globalCell.raw }
     return pSecurity[slot].cell.raw
 }
 
@@ -3570,7 +3586,7 @@ func processCellRawForSlot(_ slot: Int) -> UInt32 {
 /// summing each member's per-process handle count. No per-cell counter table.
 func processCellHandleCount(_ cellRaw: UInt32) -> Int {
     var n = 0
-    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
+    for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
         n += vfsHandleCount(slot: i)
     }
     return n
@@ -3580,7 +3596,7 @@ func processCellHandleCount(_ cellRaw: UInt32) -> Int {
 /// refuse teardown while any member is still running (EBUSY).
 func processCellLiveCount(_ cellRaw: UInt32) -> Int {
     var n = 0
-    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw { n += 1 }
+    for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw { n += 1 }
     return n
 }
 
@@ -3590,14 +3606,14 @@ func processCellLiveCount(_ cellRaw: UInt32) -> Int {
 /// written if the buffer was too small), or a negative errno. Authority is by the
 /// control handle (resolved by the syscall layer); this trusts the validated raw.
 func processCellPids(_ cellRaw: UInt32, buffer: UInt, capacity: UInt) -> Int {
-    let writable = capacity > UInt(maxProc) ? maxProc : Int(capacity)
+    let writable = capacity > UInt(processSlotCapacity()) ? processSlotCapacity() : Int(capacity)
     var dst: UnsafeMutableRawPointer? = nil
     if writable > 0 {
         guard let b = userWritableBuffer(buffer, UInt(writable * 4)) else { return Errno.invalid.code }
         dst = UnsafeMutableRawPointer(b)
     }
     var total = 0
-    for i in 0..<maxProc where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
+    for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
         if total < writable, let raw = dst {
             raw.storeBytes(of: UInt32(i + 1), toByteOffset: total * 4, as: UInt32.self) // pid = slot+1
         }
@@ -3630,7 +3646,7 @@ func processSysInfo(buffer: UInt, capacity: UInt) -> Int {
 
     var total = 0
     var running = 0
-    for i in 0..<maxProc where pState[i] != pUnused {
+    for i in processSlotRange() where pState[i] != pUnused {
         total += 1
         if pState[i] == pRunning || pState[i] == pReady { running += 1 }
     }
@@ -3747,7 +3763,7 @@ func processOnTick(fromEL0: Bool) {
     // resumes promptly on an otherwise idle system. Only nanosleep blockers carry
     // a nonzero pWakeTick, so futex/waitpid/IO blockers are left untouched.
     if cpu == 0 {
-        for i in 0..<maxProc where pState[i] == pBlocked && pWakeTick[i] != 0 {
+        for i in processSlotRange() where pState[i] == pBlocked && pWakeTick[i] != 0 {
             if systemTicks >= pWakeTick[i] {
                 markProcessReadyOnHomeCpu(i)
                 pWakeTick[i] = 0

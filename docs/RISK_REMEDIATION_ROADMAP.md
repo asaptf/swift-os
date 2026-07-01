@@ -774,6 +774,19 @@ made raising it unsafe. Full design + measurement in docs/NOTES.md (PT series).
 - Follow-ups (not blocking): bump `maxEndpoints` for IPC-heavy multi-service loads; an
   `embedded` build profile that lowers `kMaxProcesses` + the FD/VMA table sizes together.
 
+### PT2a — process-slot access boundary (DONE, 2026-07-01)
+
+- First preparatory step toward removing the fixed storage cap without a broad
+  scheduler/VFS rewrite. The backing arrays are still sized by `maxProc`, and the
+  externally visible capacity remains 64, but runtime slot validation and whole-table
+  scans now go through a narrow boundary in `process.swift`:
+  `processSlotCapacity()`, `processSlotRange()`, and `processSlotValid(_:)`.
+- This keeps PT2a behavior-neutral while making the next steps local: the storage can
+  grow, or later become chunked, without rediscovering every `slot >= maxProc` guard,
+  accounting scan, syscall snapshot loop, and scheduler readiness scan by hand.
+- Acceptance: normal kernel build plus the existing process-capacity gate
+  (`make procmax-test`) continue to pass; no syscall ABI changes.
+
 ## Interaction with other risks (C-arc, network, observability, updates)
 
 - C1–C4 should be substantially complete before or during early S work. The handle-passing IPC design in CAPABILITIES.md already calls for the zero-copy + batching + async rings properties that a multi-core network service will need.
