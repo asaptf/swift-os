@@ -334,31 +334,54 @@ private func parseContentLength(_ b: UnsafePointer<UInt8>, _ headerEnd: Int) -> 
 }
 
 @inline(__always)
-/// Parse an optional `n=<digits>` token-count override from the request line
-/// (e.g. `POST /completion?n=8 HTTP/1.0`). Scans only the first line, up to the
-/// first space (end of the URL). Returns nil when absent or malformed.
-private func parseTokenLimit(_ b: UnsafePointer<UInt8>, _ n: Int) -> Int? {
-    var i = 0
-    // Bound the scan to the request line (stop at CR). The line is
-    // "METHOD SP PATH SP VERSION", so we must scan past the first space to reach
-    // the "?n=" in the PATH; the '?'/'&' guard below avoids matching elsewhere.
-    while i < n && b[i] != 0x0d && b[i] != 0x0a { i += 1 }
-    let lineEnd = i
-    i = 0
-    while i + 1 < lineEnd {
-        // Match "n=" preceded by '?' or '&' so we don't trip on path text.
-        if b[i] == 0x6e /* n */ && b[i + 1] == 0x3d /* = */
-            && (i == 0 || b[i - 1] == 0x3f /* ? */ || b[i - 1] == 0x26 /* & */) {
-            var j = i + 2, val = 0, any = false
-            while j < lineEnd, b[j] >= 0x30, b[j] <= 0x39 {
-                val = val * 10 + Int(b[j] - 0x30); any = true; j += 1
-                if val > 100000 { return 100000 }
+/// Byte offset just after "<name>=" on the request line (the query string of
+/// `METHOD SP PATH SP VERSION`), matched only when preceded by '?' or '&' so a
+/// key never trips on path text. Returns -1 when absent. Bounds the scan to the
+/// first line (stops at CR/LF).
+private func queryValueStart(_ b: UnsafePointer<UInt8>, _ n: Int, _ name: StaticString) -> Int {
+    var lineEnd = 0
+    while lineEnd < n && b[lineEnd] != 0x0d && b[lineEnd] != 0x0a { lineEnd += 1 }
+    return name.withUTF8Buffer { nm -> Int in
+        let m = nm.count
+        if m == 0 { return -1 }
+        var i = 0
+        while i + m + 1 <= lineEnd {
+            if i == 0 || b[i - 1] == 0x3f /* ? */ || b[i - 1] == 0x26 /* & */ {
+                var k = 0, eq = true
+                while k < m { if b[i + k] != nm[k] { eq = false; break }; k += 1 }
+                if eq && b[i + m] == 0x3d /* = */ { return i + m + 1 }
             }
-            return any ? val : nil
+            i += 1
         }
-        i += 1
+        return -1
     }
-    return nil
+}
+
+/// Parse an unsigned int query param, or `def` when absent/malformed.
+private func parseQueryInt(_ b: UnsafePointer<UInt8>, _ n: Int, _ name: StaticString, _ def: Int) -> Int {
+    let s = queryValueStart(b, n, name)
+    if s < 0 { return def }
+    var j = s, val = 0, any = false
+    while j < n, b[j] >= 0x30, b[j] <= 0x39 {
+        val = val * 10 + Int(b[j] - 0x30); any = true; j += 1
+        if val > 1_000_000 { return 1_000_000 }
+    }
+    return any ? val : def
+}
+
+/// Parse a non-negative decimal float query param (e.g. `0.7`), or `def`.
+private func parseQueryFloat(_ b: UnsafePointer<UInt8>, _ n: Int, _ name: StaticString, _ def: Float) -> Float {
+    let s = queryValueStart(b, n, name)
+    if s < 0 { return def }
+    var j = s, intPart = 0
+    var any = false
+    while j < n, b[j] >= 0x30, b[j] <= 0x39 { intPart = intPart * 10 + Int(b[j] - 0x30); any = true; j += 1 }
+    var frac: Float = 0, scale: Float = 0.1
+    if j < n, b[j] == 0x2e /* . */ {
+        j += 1
+        while j < n, b[j] >= 0x30, b[j] <= 0x39 { frac += Float(Int(b[j] - 0x30)) * scale; scale *= 0.1; any = true; j += 1 }
+    }
+    return any ? (Float(intPart) + frac) : def
 }
 
 private func matches(_ b: UnsafePointer<UInt8>, _ n: Int, _ s: StaticString) -> Bool {
@@ -371,7 +394,7 @@ private func matches(_ b: UnsafePointer<UInt8>, _ n: Int, _ s: StaticString) -> 
     return ok
 }
 
-/// Serve one connection: route GET /health, GET /metrics, POST /completion.
+/// Serve one connection: route GET /health, GET /metrics, POST /completion, POST /chat.
 private func serveConnection<M: LlamaModel>(_ cfd: Int32, _ model: M, _ tok: LlamaTokenizer, _ hz: UInt64) {
     withUnsafeTemporaryAllocation(byteCount: reqCap, alignment: 16) { req in
         let rp = req.baseAddress!
@@ -398,7 +421,12 @@ private func serveConnection<M: LlamaModel>(_ cfd: Int32, _ model: M, _ tok: Lla
             writeStr(cfd, "\n")
             return
         }
-        if !matches(b, total, "POST /completion") { send404(cfd); return }
+        // Two generative routes share the body/sampler/stream tail:
+        //   POST /completion — raw prompt, greedy by default.
+        //   POST /chat       — wrap the body in the TinyLlama chat template, and
+        //                      sample by default (a chat wants variety); stop at EOS.
+        let isChat = matches(b, total, "POST /chat")
+        if !isChat && !matches(b, total, "POST /completion") { send404(cfd); return }
 
         // Prompt = the request body (bounded).
         var plen = total - headerEnd
@@ -407,21 +435,31 @@ private func serveConnection<M: LlamaModel>(_ cfd: Int32, _ model: M, _ tok: Lla
         if plen > promptCap { plen = promptCap }
         var promptBytes = [UInt8](repeating: 0, count: plen)
         for i in 0..<plen { promptBytes[i] = b[headerEnd + i] }
-        let prompt = String(decoding: promptBytes, as: UTF8.self)
+        let body = String(decoding: promptBytes, as: UTF8.self)
 
-        // Stream the completion. Headers first, then each decoded piece as it
-        // is produced (HTTP/1.0: connection close delimits the body).
+        // Prompt tokens: chat template (with the real EOS) vs raw prompt.
+        let promptTokens = isChat ? llamaChatTokens(tok, userMessage: body)
+                                  : tok.encode(body, bos: true, eos: false)
+
+        // Sampler from query params. LM6: ?temp, ?top_k, ?top_p, ?seed. Defaults:
+        // /completion is greedy (temp 0, backward-compatible); /chat samples.
+        let temp = parseQueryFloat(b, total, "temp", isChat ? 0.7 : 0.0)
+        let topK = parseQueryInt(b, total, "top_k", isChat ? 40 : 0)
+        let topP = parseQueryFloat(b, total, "top_p", isChat ? 0.9 : 1.0)
+        let seed = UInt64(parseQueryInt(b, total, "seed", 12345))
+        var sampler = LlamaSampler(temperature: temp, topK: topK, topP: topP, seed: seed)
+
+        // `?n=N` caps TOTAL positions (prompt + generated); default 64. Clamp to seqLen.
+        var want = parseQueryInt(b, total, "n", defaultSteps)
+        if want < 1 { want = defaultSteps }
+        let steps = want > model.cfg.seqLen ? model.cfg.seqLen : want
+
+        // Stream: headers first, then each decoded piece (HTTP/1.0 close delimits).
         writeStr(cfd, "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n")
         let t0 = nowTicks()
         var tFirst: UInt64 = 0
-        var produced = 0
-        // Optional `?n=N` on the request line caps the generated token count
-        // (default 64). A real model under QEMU-TCG is slow, so clients ask for a
-        // short completion; N is clamped to [1, seqLen].
-        var want = defaultSteps
-        if let n = parseTokenLimit(b, total), n > 0 { want = n }
-        let steps = want > model.cfg.seqLen ? model.cfg.seqLen : want
-        produced = llamaGenerate(model, tok, prompt: prompt, steps: steps) { piece in
+        let produced = llamaGenerateSampled(model, tok, promptTokens: promptTokens, steps: steps,
+                                            sampler: &sampler, stopOnEos: isChat) { piece in
             if piece.isEmpty { return }
             if tFirst == 0 { tFirst = nowTicks() }
             piece.withUnsafeBytes { raw in

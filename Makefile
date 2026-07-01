@@ -3653,6 +3653,11 @@ llm-serve-disk-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
 llm-serve-tinyllama-test: build $(QEMU_DTB_2048) base-image $(MODEL_TL_PACK_IMG)
 	DTB=$(QEMU_DTB_2048) ./tests/llm_serve_tinyllama_test.sh
 
+# LM6b acceptance: POST /chat (chat template + sampling) served e2e over the Q8
+# TinyLlama disk (faster per token than GGUF). Standalone, not in `make test`.
+llm-chat-test: build $(QEMU_DTB_2048) base-image $(MODEL_TL_PACK_IMG)
+	DTB=$(QEMU_DTB_2048) ./tests/llm_chat_test.sh
+
 # OS-1b/OS-1c-3: a signed SWSYS v2 bundle (the real padded kernel slot + a v4
 # SWOSKERN manifest over it, plus the tiny test base, version 2) for the no-network
 # coordinated-activate test. The base half is applied by os-coordinate-activate-test;
