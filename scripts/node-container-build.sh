@@ -63,6 +63,50 @@ FG="$SRC/tools/v8_gypfiles/features.gypi"
 if [ -f "$FG" ] && grep -q "'v8_enable_leaptiering': 1" "$FG"; then
   sed -i "s@'v8_enable_leaptiering': 1@'v8_enable_leaptiering': 0@g" "$FG"
 fi
+# Force process.stdout/stderr TTY streams to SYNCHRONOUS writes. libuv's async
+# TTY write path never flushes on SwiftOS: a queued uv_write request's deferred
+# uv__write is never serviced by uv_run over our poll/epoll emulation, so
+# console.log output is silently lost (fs.writeSync -- a direct write() syscall
+# -- is reliable). We keep tty.WriteStream (isTTY/columns/colors stay correct)
+# and only replace its byte-emitting path with fs.writeSync. Idempotent; runs
+# before js2c bakes lib/*.js into the binary.
+STDIO="$SRC/lib/internal/bootstrap/switches/is_main_thread.js"
+if [ -f "$STDIO" ] && ! grep -q '_swosSyncWrite' "$STDIO"; then
+  python3 - "$STDIO" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+anchor = "      stream = new tty.WriteStream(fd);\n      stream._type = 'tty';\n"
+if anchor not in s:
+    sys.stderr.write("SwiftOS stdio patch: anchor not found in %s\n" % p)
+    sys.exit(1)
+inject = anchor + (
+    "      // SwiftOS: libuv's async TTY write never flushes here (the deferred\n"
+    "      // uv__write for a queued request is never serviced by uv_run on our\n"
+    "      // poll/epoll emulation), so console.log output is silently lost. A\n"
+    "      // direct write() syscall works, so force synchronous writes via\n"
+    "      // fs.writeSync. tty.WriteStream is kept so isTTY/columns/colors stay\n"
+    "      // correct; only the byte-emitting path becomes synchronous.\n"
+    "      const fs = require('fs');\n"
+    "      const { Buffer } = require('buffer');\n"
+    "      stream._writev = null;\n"
+    "      stream._write = function _swosSyncWrite(chunk, encoding, cb) {\n"
+    "        try {\n"
+    "          const buf = (typeof chunk === 'string') ?\n"
+    "            Buffer.from(chunk, encoding) : chunk;\n"
+    "          let off = 0;\n"
+    "          while (off < buf.length) {\n"
+    "            off += fs.writeSync(fd, buf, off, buf.length - off);\n"
+    "          }\n"
+    "          cb();\n"
+    "        } catch (e) {\n"
+    "          cb(e);\n"
+    "        }\n"
+    "      };\n"
+)
+open(p, 'w').write(s.replace(anchor, inject, 1))
+PYEOF
+fi
 
 cd "$SRC"
 

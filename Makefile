@@ -368,9 +368,24 @@ USER_NODE_ELF := $(BUILD)/node.elf
 # OPT-IN: `make base-image INCLUDE_NODE=1` (or `make node-test`) stages /bin/node;
 # default builds skip it. Future: ship node as an installable package instead.
 INCLUDE_NODE ?= 0
+# npm is bundled JS shipped in the Node source tree (deps/npm); we build node
+# --without-npm, so it is not installed by node itself. When INCLUDE_NODE=1 we
+# also stage it at /usr/lib/node_modules/npm and drop a /bin/npm wrapper so
+# `npm --version` (node .../npm-cli.js) works. Skipped if the source tree is
+# absent (guarded in the recipe).
+NODE_SRC_DIR := $(BUILD)/node-docker-work/node-v24.16.0
+NPM_SRC_DIR  := $(NODE_SRC_DIR)/deps/npm
 ifeq ($(INCLUDE_NODE),1)
 NODE_BASE_ELFS := $(USER_NODE_ELF)
-NODE_PACK_CMD := cp $(USER_NODE_ELF) $(BASE_ROOT)/bin/node
+NODE_PACK_CMD := cp $(USER_NODE_ELF) $(BASE_ROOT)/bin/node; \
+	if [ -d "$(NPM_SRC_DIR)" ]; then \
+	  mkdir -p $(BASE_ROOT)/usr/lib/node_modules; \
+	  rm -rf $(BASE_ROOT)/usr/lib/node_modules/npm; \
+	  cp -R $(NPM_SRC_DIR) $(BASE_ROOT)/usr/lib/node_modules/npm; \
+	  printf '%s\n' '\#!/bin/node' 'require("/usr/lib/node_modules/npm/lib/cli.js")(process)' > $(BASE_ROOT)/bin/npm; \
+	  chmod +x $(BASE_ROOT)/bin/npm; \
+	  echo "  (npm staged at /usr/lib/node_modules/npm + /bin/npm)"; \
+	else echo "  (npm NOT staged — $(NPM_SRC_DIR) absent)"; fi
 else
 NODE_BASE_ELFS :=
 NODE_PACK_CMD := echo "  (node.elf NOT packed — build with INCLUDE_NODE=1 for /bin/node)"
