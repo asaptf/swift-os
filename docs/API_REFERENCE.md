@@ -1603,7 +1603,6 @@ pid, or a negative value on error.
 ### System And Process Stats
 
 ```c
-#define SWIFTOS_TOP_MAX 16
 #define SWIFTOS_CPU_MAX 8
 
 int swiftos_ps_refresh(void);
@@ -1637,6 +1636,10 @@ unsigned long swiftos_top_start_tick(int i);
 unsigned long swiftos_top_res_bytes(int i);
 const char *swiftos_top_name(int i);
 ```
+
+`swiftos_ps_refresh()` and `swiftos_top_refresh()` size their cached process
+snapshots dynamically from the kernel-reported live count; callers should iterate
+from `0` to the returned count and use the accessors above.
 
 ### Time
 

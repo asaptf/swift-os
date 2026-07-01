@@ -763,8 +763,10 @@ made raising it unsafe. Full design + measurement in docs/NOTES.md (PT series).
   op + a pooled allocator under `vfsLock` + a large SMP/test surface. The
   embedded/appliance profile, where footprint matters, lowers `kMaxProcesses` (and,
   later, the FD/VMA sizes) in one place instead.
-- Userland `/bin/ps` and `/bin/top` keep their own mirrors (`SWIFTOS_PS_MAX`,
-  `SWIFTOS_TOP_MAX`, `pidMax`), all raised 16 → 64 so they don't truncate the listing.
+- Follow-up (2026-07-01): userland `/bin/ps` and `/bin/top` no longer keep process-cap
+  mirrors. The C bridge first calls the snapshot syscalls with `capacity=0`, grows its
+  process-stat buffers to the kernel-reported live count, then retries the snapshot, so a
+  future kernel slot-cap increase does not silently truncate observability.
 - Acceptance: `make procmax-test` — `/bin/procmaxprobe` forks pipe-barriered children
   until `fork()` returns `-EAGAIN`, asserting > 16 were live at once, a clean EAGAIN at
   the boundary, exact live-count growth, and no slot leak after saturate-and-reap.

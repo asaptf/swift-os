@@ -5,7 +5,15 @@
 
 unsigned long __stack_chk_guard = 0x53574946544f5355UL;
 
-static struct swiftos_ps_entry ps_entries[SWIFTOS_PS_MAX];
+void *malloc(unsigned long nbytes);
+void *realloc(void *ptr, size_t size);
+void free(void *ptr);
+
+#define SWIFTOS_ENOMEM (-12)
+#define SWIFTOS_EAGAIN (-11)
+
+static struct swiftos_ps_entry *ps_entries;
+static int ps_capacity;
 static int ps_count;
 
 static unsigned long align_up(unsigned long value, unsigned long alignment) {
@@ -33,25 +41,63 @@ static int copy_cstr_bounded(char *dst, unsigned long cap, const char *src) {
     return 0;
 }
 
+static int ensure_ps_capacity(int wanted) {
+    if (wanted < 1) {
+        wanted = 1;
+    }
+    if (wanted <= ps_capacity) {
+        return 0;
+    }
+    void *next = realloc(ps_entries, (size_t)wanted * sizeof(struct swiftos_ps_entry));
+    if (!next) {
+        return SWIFTOS_ENOMEM;
+    }
+    ps_entries = (struct swiftos_ps_entry *)next;
+    ps_capacity = wanted;
+    return 0;
+}
+
 int swiftos_ps_refresh(void) {
-    ps_count = (int)__syscall3(SYS_PSINFO, (long)ps_entries, SWIFTOS_PS_MAX, 0);
-    return ps_count;
+    int wanted = (int)__syscall3(SYS_PSINFO, 0, 0, 0);
+    if (wanted < 0) {
+        ps_count = 0;
+        return wanted;
+    }
+    for (int attempt = 0; attempt < 4; attempt += 1) {
+        int rc = ensure_ps_capacity(wanted);
+        if (rc < 0) {
+            ps_count = 0;
+            return rc;
+        }
+        int got = (int)__syscall3(SYS_PSINFO, (long)ps_entries, ps_capacity, 0);
+        if (got < 0) {
+            ps_count = 0;
+            return got;
+        }
+        if (got <= ps_capacity) {
+            ps_count = got;
+            return ps_count;
+        }
+        wanted = got;
+    }
+    ps_count = 0;
+    return SWIFTOS_EAGAIN;
 }
 
 unsigned int swiftos_ps_pid(int index) {
-    return (index >= 0 && index < ps_count && index < SWIFTOS_PS_MAX) ? ps_entries[index].pid : 0;
+    return (index >= 0 && index < ps_count && index < ps_capacity) ? ps_entries[index].pid : 0;
 }
 
 unsigned int swiftos_ps_ppid(int index) {
-    return (index >= 0 && index < ps_count && index < SWIFTOS_PS_MAX) ? ps_entries[index].ppid : 0;
+    return (index >= 0 && index < ps_count && index < ps_capacity) ? ps_entries[index].ppid : 0;
 }
 
 unsigned int swiftos_ps_state(int index) {
-    return (index >= 0 && index < ps_count && index < SWIFTOS_PS_MAX) ? ps_entries[index].state : 0;
+    return (index >= 0 && index < ps_count && index < ps_capacity) ? ps_entries[index].state : 0;
 }
 
 const char *swiftos_ps_name(int index) {
-    if (index < 0 || index >= ps_count || index >= SWIFTOS_PS_MAX) {
+    if (index < 0 || index >= ps_count || index >= ps_capacity) {
         return "?";
     }
     return ps_entries[index].name;
@@ -615,7 +661,8 @@ struct top_procstat {
 };
 
 static struct top_sysinfo g_sys;
-static struct top_procstat g_top[SWIFTOS_TOP_MAX];
+static struct top_procstat *g_top;
+static int g_top_capacity;
 static int g_top_count;
 
 int swiftos_sysinfo_refresh(void) {
@@ -645,12 +692,50 @@ unsigned long swiftos_sys_cpu_idle_ticks(unsigned int cpu) {
     return cpu == 0 ? g_sys.idle_ticks : 0;
 }
 
-int swiftos_top_refresh(void) {
-    g_top_count = (int)__syscall3(SYS_PROCSTAT, (long)g_top, SWIFTOS_TOP_MAX, 0);
-    return g_top_count;
+static int ensure_top_capacity(int wanted) {
+    if (wanted < 1) {
+        wanted = 1;
+    }
+    if (wanted <= g_top_capacity) {
+        return 0;
+    }
+    void *next = realloc(g_top, (size_t)wanted * sizeof(struct top_procstat));
+    if (!next) {
+        return SWIFTOS_ENOMEM;
+    }
+    g_top = (struct top_procstat *)next;
+    g_top_capacity = wanted;
+    return 0;
 }
 
-static int top_valid(int i) { return i >= 0 && i < g_top_count && i < SWIFTOS_TOP_MAX; }
+int swiftos_top_refresh(void) {
+    int wanted = (int)__syscall3(SYS_PROCSTAT, 0, 0, 0);
+    if (wanted < 0) {
+        g_top_count = 0;
+        return wanted;
+    }
+    for (int attempt = 0; attempt < 4; attempt += 1) {
+        int rc = ensure_top_capacity(wanted);
+        if (rc < 0) {
+            g_top_count = 0;
+            return rc;
+        }
+        int got = (int)__syscall3(SYS_PROCSTAT, (long)g_top, g_top_capacity, 0);
+        if (got < 0) {
+            g_top_count = 0;
+            return got;
+        }
+        if (got <= g_top_capacity) {
+            g_top_count = got;
+            return g_top_count;
+        }
+        wanted = got;
+    }
+    g_top_count = 0;
+    return SWIFTOS_EAGAIN;
+}
+
+static int top_valid(int i) { return i >= 0 && i < g_top_count && i < g_top_capacity; }
 
 unsigned int  swiftos_top_pid(int i)        { return top_valid(i) ? g_top[i].pid : 0; }
 unsigned int  swiftos_top_ppid(int i)       { return top_valid(i) ? g_top[i].ppid : 0; }

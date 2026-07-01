@@ -3,11 +3,6 @@
 #ifndef SWIFTOS_USER_SWIFT_USER_H
 #define SWIFTOS_USER_SWIFT_USER_H
 
-// Must track the kernel process-slot cap (kMaxProcesses in
-// kernel/user/process.swift). Userland compiles separately, so this is a hand-kept
-// mirror: if it lags the kernel cap, ps silently truncates its listing.
-#define SWIFTOS_PS_MAX 64
-
 struct swiftos_ps_entry {
     unsigned int pid;
     unsigned int ppid;
@@ -332,8 +327,7 @@ unsigned int swiftos_tcget_lflag(int fd);
 int swiftos_tcset_lflag(int fd, unsigned int lflag);
 
 // ---- /bin/top: system + per-process statistics --------------------------
-// Mirror of the kernel process-slot cap (kMaxProcesses); see SWIFTOS_PS_MAX above.
-#define SWIFTOS_TOP_MAX 64
+// Process snapshots grow to the kernel-reported live count at refresh time.
 #define SWIFTOS_CPU_MAX 8
 
 // Refresh the cached system-stats blob (SYS_SYSINFO). 0 on success, else < 0.
