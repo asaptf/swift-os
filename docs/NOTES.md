@@ -8621,7 +8621,7 @@ makes all three derive from it, so the cap can never again be raised in one tabl
 without the others. `maxEndpoints` (IPC, not per-process) is deliberately left at 16
 — a separate resource with its own follow-up knob.
 
-**Measurement that set the value.** Per-slot static cost is ~26 KB, dominated by the
+**Measurement that set the PT1 value.** Per-slot static cost was ~26 KB, dominated by the
 two heavyweight per-process tables sized for real runtimes: the FD handle table
 (`maxFDs = 512` × `HandleEntry` ≈ 24 B = ~12 KB) and the anonymous-VMA table
 (`maxAnonVmas = 512` × `AnonVma` ≈ 24 B = ~12 KB; "512 covers Node"). So 64 slots ≈
@@ -8676,6 +8676,33 @@ per-process table (VFS handle/cwd/confine state or anon-VMA state) behind a per-
 object without simultaneously changing every caller's notion of table size.
 
 Acceptance: `make build` and `make procmax-test`; no syscall ABI changes.
+
+### PT2b — lazy anonymous-VMA tables (DONE, 2026-07-01)
+
+The first heavyweight per-process resource is now lazy. `kernel/user/process.swift`
+replaces the static `maxProc * maxAnonVmas` array with one pointer per process slot.
+A slot gets its `maxAnonVmas` table only when it first creates anonymous/device mmap
+state (`anonVmaAdd`) or when `fork()` / `thread_create()` inherits a parent's existing
+anonymous-VMA table. Processes that never use anonymous/device mmap now pay one pointer
+instead of 512 `AnonVma` records.
+
+This removes roughly **12 KiB of fixed `.bss` per process slot** (about 768 KiB at the
+current 64-slot hosting default) without lowering the useful per-process VMA ceiling:
+a V8/Node process that needs 512 anonymous reservations still gets the same table, just
+from the kernel heap on first use. Because the kernel heap is still a bump allocator,
+the table is retained for slot reuse rather than freed; the point of PT2b is to remove
+compile-time/static slot weight, not yet to implement full dynamic reclamation.
+
+Correctness detail: `fork()` and `thread_create()` now treat inherited VMA-table
+allocation failure as `ENOMEM`. That is deliberate. Losing reservation metadata would
+make later `mprotect()`/`munmap()` behavior diverge from the copied address space, so
+the child/thread must not be created unless the metadata copy succeeds.
+
+Acceptance: `make build`, a `/bin/mmapdemo` boot smoke (anonymous mmap,
+mprotect/W^X, file-VMA cleanup), and the single-core + `-smp 4` `procmax` gate;
+no syscall ABI changes. In this local macOS environment the broader newlib-backed
+`mmapreserve`/`mapfixed` targets still require the missing newlib sysroot headers,
+so PT2b used the native Swift mmap smoke plus the process-capacity QEMU gates.
 
 ## LM series — scaling inference toward a real LLM
 
