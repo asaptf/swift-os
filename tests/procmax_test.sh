@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# procmax_test.sh - process-table capacity (kMaxProcesses).
+# procmax_test.sh - process-table capacity/growth.
 #
 # Boots the base image and lets the boot probe (/bin/procmaxprobe, run from
-# kernel/main.swift) run. The probe forks children in globalCell, each blocked on
-# a pipe barrier, until fork() returns -EAGAIN. It asserts more than the historical
-# 16-slot cap were live simultaneously (the cap is raised), that the boundary
-# returned a clean EAGAIN, and that saturate-and-reap leaks no slot. The probe
-# prints "PROCMAX OK: ..." only when every assertion holds. This is a
-# non-interactive boot probe — the test just boots and awaits the verdict marker.
-# Runs single-core by default; the Makefile target also runs it under -smp 4.
+# kernel/main.swift) run. The probe forks more than 64 children in globalCell,
+# keeps them all blocked on a pipe barrier at once, and then reaps them. It proves
+# the old compile-time 64-slot process table is no longer the runtime boundary and
+# that grow-and-reap leaks no slot. The probe prints "PROCMAX OK: ..." only when
+# every assertion holds. This is a non-interactive boot probe — the test just boots
+# and awaits the verdict marker. Runs single-core by default; the Makefile target
+# also runs it under -smp 4.
 
 set -u
 
@@ -52,8 +52,8 @@ await() {  # await MARKER [MAXSEC]
 
 fail() {
   echo "FAIL: $1" >&2
-  echo "--- serial (procmax capacity region) ---" >&2
-  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/process-table capacity probe/,$p' | tail -40 >&2 || true
+  echo "--- serial (procmax growth region) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/process-table growth probe/,$p' | tail -40 >&2 || true
   exit 1
 }
 
@@ -72,7 +72,7 @@ QP=$!
 # The probe runs before the interactive tty demo, so no input is needed; just
 # wait for its verdict.
 await "PROCMAX OK:" 120 \
-  || fail "process-table capacity probe did not reach its OK verdict"
+  || fail "process-table growth probe did not reach its OK verdict"
 
 stop_qemu
 QP=""
@@ -95,5 +95,5 @@ for marker in \
   grep -qF "$marker" <<<"$clean" && { echo "FAIL: forbidden marker present: $marker" >&2; exit 1; }
 done
 
-echo "PASS: process-table capacity exceeds the old 16-slot cap with a clean EAGAIN boundary and no leak under -smp $SMP_CPU_COUNT"
+echo "PASS: process-table storage grows past the old 64-slot cap with no leak under -smp $SMP_CPU_COUNT"
 exit 0

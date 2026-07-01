@@ -203,7 +203,7 @@ private let maxFDs = 512
 private let maxOpenDescriptions = 1024
 private let maxPipes = 16
 private let pipeCap = 1024
-private let maxVFSProcesses = kMaxProcesses  // MUST equal maxProc: handle/cwd/confine tables are slot-keyed
+private var maxVFSProcesses = kInitialProcessSlots
 private let maxEvents = 16
 
 private struct VFSProcessState {
@@ -215,7 +215,7 @@ private struct VFSProcessState {
 // PT2c: the fd table is the second heavyweight per-process resource moved out
 // of fixed slot storage. Each VFS group leader gets a maxFDs table on demand;
 // inactive slots and thread followers pay only this small state record.
-private var vfsProcessStates = [VFSProcessState](repeating: VFSProcessState(), count: maxVFSProcesses)
+private var vfsProcessStates: UnsafeMutablePointer<VFSProcessState>! = nil
 private var openDescriptions = [OpenDescription](repeating: OpenDescription(), count: maxOpenDescriptions)
 private var pipes = [Pipe](repeating: Pipe(), count: maxPipes)
 private var eventCounters = [EventCounter](repeating: EventCounter(), count: maxEvents)
@@ -306,18 +306,63 @@ private var serviceNameBytes = [UInt8](repeating: 0, count: maxServiceNames * se
 // wakeup written by one thread never reaches the fd another polls — node -e
 // deadlocked here.
 // -1 = uninitialised → treated as identity (the slot is its own leader).
-private var vfsGroupLeader = [Int](repeating: -1, count: maxVFSProcesses)
+private var vfsGroupLeader: UnsafeMutablePointer<Int>! = nil
 
 /// Resolve a slot to the group leader that owns its shared fd table / cwd.
 private func vfsLeader(_ slot: Int) -> Int {
-    guard slot >= 0 && slot < maxVFSProcesses else { return slot }
+    guard vfsGroupLeader != nil && slot >= 0 && slot < maxVFSProcesses else { return slot }
     let l = vfsGroupLeader[slot]
     return (l >= 0 && l < maxVFSProcesses) ? l : slot
 }
 
 @inline(__always)
 private func vfsProcessValid(_ slot: Int) -> Bool {
-    slot >= 0 && slot < maxVFSProcesses
+    vfsProcessStates != nil && slot >= 0 && slot < maxVFSProcesses
+}
+
+private func vfsGrowTable<T>(_ old: UnsafeMutablePointer<T>?,
+                             oldCount: Int,
+                             newCount: Int,
+                             defaultValue: T) -> UnsafeMutablePointer<T>? {
+    if newCount <= 0 { return nil }
+    let bytes = MemoryLayout<T>.stride * newCount
+    guard let raw = swiftos_kernel_alloc(UInt(bytes), 16) else { return nil }
+    let next = raw.bindMemory(to: T.self, capacity: newCount)
+    var i = 0
+    if let oldTable = old {
+        while i < oldCount {
+            next[i] = oldTable[i]
+            i += 1
+        }
+    }
+    while i < newCount {
+        next[i] = defaultValue
+        i += 1
+    }
+    return next
+}
+
+func vfsEnsureProcessCapacity(_ requestedCapacity: Int) -> Bool {
+    let daif = vfsLock()
+    defer { vfsUnlock(daif) }
+
+    if vfsProcessStates != nil && requestedCapacity <= maxVFSProcesses { return true }
+    let oldCapacity = vfsProcessStates == nil ? 0 : maxVFSProcesses
+    let newCapacity = requestedCapacity > maxVFSProcesses ? requestedCapacity : maxVFSProcesses
+    guard let nextStates = vfsGrowTable(vfsProcessStates,
+                                        oldCount: oldCapacity,
+                                        newCount: newCapacity,
+                                        defaultValue: VFSProcessState()),
+          let nextLeaders = vfsGrowTable(vfsGroupLeader,
+                                         oldCount: oldCapacity,
+                                         newCount: newCapacity,
+                                         defaultValue: -1) else {
+        return false
+    }
+    vfsProcessStates = nextStates
+    vfsGroupLeader = nextLeaders
+    maxVFSProcesses = newCapacity
+    return true
 }
 
 private func handleTable(_ proc: Int) -> UnsafeMutablePointer<HandleEntry>? {
@@ -1123,6 +1168,10 @@ func vfsInit() {
     // their own on-disk mtimes rather than the boot time.
     vfsMountDataFs(root)
 
+    if !vfsEnsureProcessCapacity(processSlotCapacityForSubsystems()) {
+        uartPuts("panic: vfs process-state allocation failed\n")
+        while true {}
+    }
     for p in 0..<maxVFSProcesses {
         setCwdNode(p, root)
         setConfineNode(p, 0)

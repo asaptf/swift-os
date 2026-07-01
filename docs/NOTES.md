@@ -8402,6 +8402,9 @@ oversubscription case. **Update (PT, 2026-06-24):** `maxFutexWaiters` now derive
 from the same `kMaxProcesses` constant as `maxProc` (futex.swift), so it can never
 fall behind the slot count — at most one parked waiter per thread, so the table
 cannot legitimately overflow and the EAGAIN branch stays defensive by construction.
+**Update (PT3a, 2026-07-01):** both names were retired as hard caps: the futex
+waiter table is pointer-backed and grows with the process-slot table, preserving
+that invariant past the original 64 slots.
 Verified `make futex-test` PASS at `-smp 4`. Remaining audit
 tracks: datafs crash injection, SMP atomic contention, signal races, driver fault
 injection.
@@ -8680,10 +8683,11 @@ process slots" and had to move together:**
   previously-dead queue-full EAGAIN branch (see the futex audit note above) would
   come alive untested.
 
-PT1 introduces one source of truth, `let kMaxProcesses = 64` (process.swift), and
-makes all three derive from it, so the cap can never again be raised in one table
-without the others. `maxEndpoints` (IPC, not per-process) is deliberately left at 16
-— a separate resource with its own follow-up knob.
+PT1 introduced one source of truth, `let kMaxProcesses = 64` (process.swift), and
+made all three derive from it, so the cap could not be raised in one table without
+the others. PT3a later retired that as a hard cap: the same value is now the
+initial process-slot allocation. `maxEndpoints` (IPC, not per-process) is
+deliberately left at 16 — a separate resource with its own follow-up knob.
 
 **Measurement that set the PT1 value.** Per-slot static cost was ~26 KB, dominated by the
 two heavyweight per-process tables sized for real runtimes: the FD handle table
@@ -8695,11 +8699,11 @@ pool) was **rejected** as premature: it would save ~1.5–3 MB at the cost of
 indirection on every FD op (a hot path) plus a new pooled allocator under `vfsLock`
 and a much larger SMP/test surface — against priority #2's "fast" and the
 strict-workflow "small reviewable steps". The embedded/appliance profile, where
-static footprint actually matters, can instead lower `kMaxProcesses` in one place.
+static footprint actually matters, can instead lower the initial slot allocation.
 
 **Userland observability buffers.** `/bin/ps` and `/bin/top` originally kept their
 own caps (separate compilation, no shared header): `SWIFTOS_PS_MAX`,
-`SWIFTOS_TOP_MAX`, and `pidMax` were raised with `kMaxProcesses` during PT1, but
+`SWIFTOS_TOP_MAX`, and `pidMax` were raised with the 64-slot kernel cap during PT1, but
 they still formed a quiet future truncation risk. A 2026-07-01 follow-up removed
 those mirrors: the C bridge now calls `SYS_psinfo` / `SYS_procstat` with
 `capacity=0` to learn the live count, grows its buffers, then retries the
@@ -8708,7 +8712,7 @@ previous-sample cache from the observed pid range. The kernel paths already
 iterate the process-slot range within caller capacity, so no syscall ABI change was
 needed.
 
-**Acceptance.** New `/bin/procmaxprobe` boot probe forks children in globalCell, each
+**Historical acceptance.** New `/bin/procmaxprobe` boot probe forks children in globalCell, each
 parked on a pipe barrier, until `fork()` returns `-EAGAIN`; it asserts more than the
 old 16 were live simultaneously, that the boundary returned exactly EAGAIN (`-11`),
 that the live total grew by exactly the number forked, and that saturate-and-reap
@@ -8719,14 +8723,14 @@ got a forward-update. See the "Process-table capacity (PT series)" section in
 docs/RISK_REMEDIATION_ROADMAP.md.
 
 Follow-ups (not blocking): bump `maxEndpoints` if IPC-heavy multi-service workloads
-need it; an `embedded` build profile that lowers `kMaxProcesses` + the FD/VMA table
-sizes together for a minimal static footprint.
+need it; an `embedded` build profile that lowers the initial process-slot allocation
+and the FD/VMA table sizes together for a minimal static footprint.
 
 ### PT2a — process-slot access boundary (DONE, 2026-07-01)
 
 This is the first behavior-neutral step toward removing the fixed process-table
-storage limit cleanly. The backing storage is still the PT1 fixed array set
-(`maxProc == kMaxProcesses == 64`), so the runtime limit intentionally does not change
+storage limit cleanly. The backing storage was still the PT1 fixed array set
+(`maxProc == kMaxProcesses == 64`), so the runtime limit intentionally did not change
 in this milestone. What changes is the boundary: runtime slot validation and full-table
 scans in `kernel/user/process.swift` now go through `processSlotCapacity()`,
 `processSlotRange()`, and `processSlotValid(_:)`.
@@ -8734,8 +8738,8 @@ scans in `kernel/user/process.swift` now go through `processSlotCapacity()`,
 That sounds small, but it removes the most brittle part of the future refactor. The
 scheduler, wait/reap paths, `/bin/ps`/`top` snapshots, cell accounting, signal helpers,
 sleep wakeup scan, and S5 telemetry checks no longer open-code `slot >= maxProc` or
-`0..<maxProc`. Storage sizing still uses `maxProc` directly, making the milestone easy
-to review and preserving the exact `.bss` layout. PT2b can now move one heavyweight
+`0..<maxProc`. Storage sizing still used `maxProc` directly, making the milestone easy
+to review and preserving the exact `.bss` layout. PT2b could now move one heavyweight
 per-process table (VFS handle/cwd/confine state or anon-VMA state) behind a per-slot
 object without simultaneously changing every caller's notion of table size.
 
@@ -8793,6 +8797,39 @@ spawn, `ENOMEM` for fork) instead of creating a process with partial VFS state.
 
 Acceptance: `make build`, VFS boot smokes, and the single-core + `-smp 4` `procmax`
 gate; no syscall ABI changes.
+
+### PT3a — growable process/VFS/futex slot storage (DONE, 2026-07-01)
+
+The PT1 value `64` is now an **initial allocation**, not a compile-time process
+limit. `kernel/user/process.swift` replaced the fixed Swift arrays for process
+slot metadata with pointer-backed tables grown through `processInstallSlotStorage`.
+The direct `pState[slot]` / `pTtbr0[slot]` style stays intact, but the backing
+storage can be replaced by a larger heap allocation and the visible capacity is
+published only through `processSlotCapacity()` / `processSlotRange()`.
+
+The grow path is coordinated across slot-keyed subsystems:
+
+- `procCtx` grows with the metadata tables so saved EL0 contexts exist for new
+  slots. Existing saved contexts are copied; running contexts are saved into the
+  current global `procCtx` pointer on the next scheduler switch, as before.
+- VFS process state grows via `vfsEnsureProcessCapacity`, preserving PT2c's lazy
+  fd-table model. New slots receive only `VFSProcessState` + group-leader metadata;
+  their `maxFDs` table is still allocated on process initialisation.
+- Futex waiter storage grows via `futexEnsureWaiterCapacity`, keeping the invariant
+  "at most one parked futex waiter per process slot" true after expansion.
+
+`allocSlot()` now scans the visible range; if no quiesced unused slot exists, it
+grows VFS, futex, and process storage by another 64-slot chunk and scans again.
+Failure still reports the existing spawn/fork failure paths, but the old 64-slot
+array boundary is gone. This is intentionally still a dense slot table (pids remain
+`slot + 1`); a future PT step can make the growth chunk policy smarter or add a
+process-table lock around truly concurrent fork storms.
+
+Acceptance: `make build`; updated procmax boot gate single-core and under `-smp 4`.
+The probe no longer waits for a table-full `EAGAIN`: it holds more than 64 children
+alive behind a pipe barrier, checks `cell_stat(globalCell)` grew by exactly that
+many live processes, releases the barrier, reaps every child, and proves the live
+count returns to baseline.
 
 ## LM series — scaling inference toward a real LLM
 

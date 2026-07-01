@@ -752,7 +752,7 @@ made raising it unsafe. Full design + measurement in docs/NOTES.md (PT series).
   tables are slot-keyed, so a drift corrupts FD indexing), and `maxFutexWaiters`
   (futex.swift — at most one parked waiter per thread, so bounded by the slot count;
   if `maxProc` exceeded it the dead queue-full EAGAIN branch would come alive
-  untested). PT1 makes all three derive from one `let kMaxProcesses = 64`
+  untested). PT1 made all three derive from one `let kMaxProcesses = 64`
   (process.swift), so the cap can never again be raised in one table without the
   others. `maxEndpoints` (IPC, not per-process) is intentionally left at 16.
 - **Measurement set the value, and killed a fancier design.** Per-slot static cost is
@@ -762,18 +762,18 @@ made raising it unsafe. Full design + measurement in docs/NOTES.md (PT series).
   hosting target. A two-tier decouple (small default + on-demand pool for FD/VMA) was
   **rejected** as premature: ~1.5–3 MB saved against hot-path indirection on every FD
   op + a pooled allocator under `vfsLock` + a large SMP/test surface. The
-  embedded/appliance profile, where footprint matters, lowers `kMaxProcesses` (and,
-  later, the FD/VMA sizes) in one place instead.
+  embedded/appliance profile, where footprint matters, lowers that initial sizing
+  (and, later, the FD/VMA sizes) in one place instead.
 - Follow-up (2026-07-01): userland `/bin/ps` and `/bin/top` no longer keep process-cap
   mirrors. The C bridge first calls the snapshot syscalls with `capacity=0`, grows its
   process-stat buffers to the kernel-reported live count, then retries the snapshot, so a
   future kernel slot-cap increase does not silently truncate observability.
-- Acceptance: `make procmax-test` — `/bin/procmaxprobe` forks pipe-barriered children
+- Historical acceptance: `make procmax-test` — `/bin/procmaxprobe` forks pipe-barriered children
   until `fork()` returns `-EAGAIN`, asserting > 16 were live at once, a clean EAGAIN at
   the boundary, exact live-count growth, and no slot leak after saturate-and-reap.
   Single-core + `-smp 4`; wired into `make test`.
 - Follow-ups (not blocking): bump `maxEndpoints` for IPC-heavy multi-service loads; an
-  `embedded` build profile that lowers `kMaxProcesses` + the FD/VMA table sizes together.
+  `embedded` build profile that lowers the initial slot count + the FD/VMA table sizes together.
 
 ### PT2a — process-slot access boundary (DONE, 2026-07-01)
 
@@ -816,6 +816,21 @@ made raising it unsafe. Full design + measurement in docs/NOTES.md (PT series).
   process with partial VFS state.
 - Acceptance: normal kernel build plus VFS/process-capacity QEMU gates continue to
   pass; no syscall ABI changes.
+
+### PT3a — growable process/VFS/futex slot storage (DONE, 2026-07-01)
+
+- The 64-slot value is no longer a compile-time process limit. `process.swift`
+  now treats it as `kInitialProcessSlots`: the process metadata tables and saved
+  `CPUContext` storage are pointer-backed and grow by 64-slot chunks when
+  `allocSlot()` exhausts the current visible range.
+- Slot-keyed neighbours grow with the process table. `vfs.swift` grows
+  `VFSProcessState`/group-leader storage, keeping fd tables lazy; `futex.swift`
+  grows its one-waiter-per-slot table. The public syscall ABI is unchanged: slots
+  remain dense integer pids (`slot + 1`), and `/bin/ps`/`top` already size their
+  snapshots dynamically.
+- Acceptance: `make build`, updated procmax boot gate single-core and `-smp 4`.
+  The probe now keeps more than 64 children live at once and reaps them, proving
+  the old PT1 64-slot table is no longer the runtime boundary.
 
 ## Interaction with other risks (C-arc, network, observability, updates)
 
