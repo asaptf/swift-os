@@ -1895,6 +1895,30 @@ llm-tinyllama-test: $(TINYLLAMA_Q8) $(TINYLLAMA_TOK)
 	$(HOST_SWIFTC) -O tests/llm_tinyllama_engine_test.swift userland/lib/llama2.swift -o $(BUILD)/llm_tinyllama_engine_test
 	$(BUILD)/llm_tinyllama_engine_test
 
+# ---- LM5: GGUF + Q4_K reader ----------------------------------------------
+# Read the mainstream GGUF / k-quant format: fetch a pre-quantized TinyLlama
+# Q4_K_M GGUF (~640 MB, ~half of Q8; gitignored), parse it with the shared
+# reader (userland/lib/gguf.swift), and serve it via a Q4_K/Q6_K per-block
+# dequant engine. Heavy artifacts, so NOT part of `make test`.
+TINYLLAMA_GGUF := $(MODEL_DIR)/tinyllama-q4km.gguf
+GGUFDUMP := $(BUILD)/ggufdump
+
+$(TINYLLAMA_GGUF): scripts/fetch-tinyllama-gguf.sh
+	scripts/fetch-tinyllama-gguf.sh
+
+.PHONY: tinyllama-gguf
+tinyllama-gguf: $(TINYLLAMA_GGUF)
+
+$(GGUFDUMP): tools/ggufdump.swift userland/lib/gguf.swift Makefile | $(BUILD)/.dir
+	$(HOST_SWIFTC) -O tools/ggufdump.swift userland/lib/gguf.swift -o $@
+
+.PHONY: ggufdump
+ggufdump: $(GGUFDUMP)
+
+# LM5a acceptance: the shared GGUF reader parses a real TinyLlama Q4_K_M GGUF.
+gguf-dump-test: $(GGUFDUMP) $(TINYLLAMA_GGUF)
+	./tests/gguf_dump_test.sh
+
 # I5: model-bundle manifest generator (sha256 + sizes -> manifest.toml).
 MODELMANIFEST := $(BUILD)/modelmanifest
 $(MODELMANIFEST): tools/modelmanifest.swift kernel/crypto/sha256.swift Makefile | $(BUILD)/.dir
