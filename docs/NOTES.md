@@ -3,6 +3,41 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## NPM44 — `npm --version` reliable on SwiftOS (2026-07-02)
+
+Merged to `origin/main` via PR #6 (`a71350bea`). Completes the npm beachhead:
+bundled npm 11.13.0 (staged by `make base-image INCLUDE_NODE=1`) now prints its
+version under QEMU after V8 init and the npm CLI event loop run.
+
+- **Root cause (GDB-confirmed):** V8 `HandleScope` abort — *"Entering the V8 API
+  without proper locking in place"*. `ThreadManager::IsLockedByCurrentThread()`
+  compares `mutex_owner_` to `ThreadId::Current()`, which reads `thread_local`
+  via **`tpidr_el0`**. The EL0 trap frame saved/restored all GPRs except
+  `tpidr_el0`, so after preemption a thread could resume with a sibling's TLS
+  base and fail the isolate-lock check once `v8::Locker` had run.
+- **Kernel fixes:**
+  - `kernel/arch/aarch64/exceptions.S` — save/restore `tpidr_el0` at trap-frame
+    offset 272 + `isb` before `eret`.
+  - `kernel/arch/aarch64/user_entry.S` — `msr tpidr_el0, xzr` on
+    `user_thread_launch` / `user_thread_launch_arg` so new threads do not inherit
+    a sibling TLS base before `pthread_trampoline` installs their own.
+  - `kernel/user/process.swift` — `trapFrameTPIDRIndex = 34`, zero the slot on
+    exec; `userStackPages` 16→128 (512 KiB main stack for npm/V8 init).
+- **Userland fixes:**
+  - `userland/compat/stubs.c` — `COMPAT_PTHREAD_DEFAULT_STACK` 64 KiB→2 MiB;
+    `COMPAT_MAIN_STACK_SIZE` synced to 512 KiB.
+  - `userland/node-compat/node_compat.c` — `getpwuid_r`/`getpwnam_r` for root →
+    `/root` (fixes `uv_os_homedir` ENOSYS when `HOME` is unset).
+- **Tests:** `tests/npm_gdb.sh`, `tests/npm_gdb_segfault.sh` (GDB probes);
+  `make npm-test` asserts `11.13.0`; `make node-test` unchanged.
+- **Verified:** `npm --version` 5/5 consecutive fresh boots; `process.exit` and
+  `console.log` node regressions 20/20 post-fix.
+
+**Next.** Registry installs (`npm install` into `/tmp/npm-prefix`), HTTP server
+smoke (`require("http").createServer(...)`), and PM2 remain future milestones.
+
+**Acceptance.** `make npm-test`, `make node-test`, `make docs-test`.
+
 ## SH2 zsh port (2026-06-23)
 
 Cross-build **zsh 5.9** for swift-os: static AArch64 binary with built-in ZLE

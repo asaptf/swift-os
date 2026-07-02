@@ -371,9 +371,9 @@
       "summary": "JavaScript server runtime for modern web apps and tooling.",
       "runtimeDependencies": ["ca-certificates", "openssl", "zlib"],
       "prerequisiteBundles": ["base-posix", "net-client", "net-server", "tls-base", "threads", "mmap-vm"],
-      "blockedBy": ["full libuv thread audit"],
+      "blockedBy": ["HTTP server smoke", "registry/networked package workflows"],
       "smokeTest": "node -e 'require(\"http\").createServer((_,r)=>r.end(\"ok\")).listen(8080)'",
-      "notes": "The first SwiftOS Node.js port uses Node's --v8-lite-mode as the accepted jitless profile, avoiding a runtime executable-code dependency for V8. Native addons are deferred until dynamic loading policy exists. Dedicated probes cover worker-thread eventfd wakeups over poll, POSIX semaphores used by libuv's Unix semaphore wrappers, read/write locks used by libuv's Unix rwlock wrappers, error-check and recursive mutex types used by libuv's Unix mutex wrappers, thread-name helpers used by libuv's Unix thread layer, thread stack sizing used by libuv's uv_thread_create_ex path, thread-local keys, once guards, thread identity, join, and detach used by libuv's Unix thread layer, environment mutation plus libuv-style child environment handoff through execvp, the pthread barrier branch selected by libuv, timed condition waits with CLOCK_MONOTONIC deadlines, AF_UNIX socketpair local streams used by libuv process/stream paths, pthread_atfork child reinitialization, the fork/execvp process-spawn handshake used by libuv's Unix uv_spawn path, and the signal watcher self-pipe setup/dispatch shape; full libuv audit remains the runtime blocker."
+      "notes": "Node.js 24.16 cross-builds for SwiftOS (Docker `scripts/node-container-build.sh` + `scripts/link-node.sh`) and runs on V8 in --v8-lite-mode. `make node-test` proves `node --version` and `node -e \"console.log(6*7)\"` on a 2 GiB DTB image with INCLUDE_NODE=1. Native addons remain deferred until dynamic loading policy exists. The full catalog smoke (in-kernel HTTP server) and npm registry installs are still open."
     },
     {
       "name": "npm",
@@ -386,9 +386,9 @@
       "summary": "JavaScript package manager for the SwiftOS Node.js runtime.",
       "runtimeDependencies": ["nodejs"],
       "prerequisiteBundles": ["base-posix", "proc-basic", "net-client", "tls-base"],
-      "blockedBy": ["nodejs runtime port", "writable global-prefix policy", "registry HTTPS transport policy", "node-gyp/native addon policy"],
+      "blockedBy": ["writable global-prefix policy", "registry HTTPS transport policy", "node-gyp/native addon policy"],
       "smokeTest": "npm --version, then install a pure-JS package into /tmp/npm-prefix",
-      "notes": "Package npm separately from nodejs so the immutable root, /tmp cache, registry access, child-process install-script behavior, and native-addon decisions stay explicit. The libuv-shaped fork/execvp spawn path is covered by uvspawnprobe and install-script environment handoff is covered by uvenvprobe; the full npm smoke still waits for the Node.js runtime port."
+      "notes": "Bundled npm 11.13.0 is staged at /usr/lib/node_modules/npm when INCLUDE_NODE=1; `make npm-test` proves `npm --version`. Registry installs, install scripts, and native addons remain blocked by prefix/cache policy and node-gyp constraints. The libuv-shaped fork/execvp spawn path is covered by uvspawnprobe and install-script environment handoff is covered by uvenvprobe."
     },
     {
       "name": "pm2",

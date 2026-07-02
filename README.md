@@ -12,7 +12,7 @@
 - **An in-kernel TCP/IP stack** — DHCP, TCP, UDP, DNS, HTTP, TLS — with a sans-IO, pure-Swift protocol core.
 - **SMP** — schedules across multiple cores (tested at `-smp 4`) with cross-CPU TLB shootdown and spinlock-protected kernel state (`make smp-test`, `make s5-test`).
 - **A three-tier filesystem** — an immutable signed read-only base, a RAM `tmpfs` scratch tier, and a persistent, `fsync`-durable `/data` tier, durable enough to back SQLite (`make datafs-sqlite-test`).
-- **Runs real software** — **nginx** serving HTTPS (`make nginx-test`, `make nginx-tls-test`), and **Node.js 24.16** brought up on V8 in `--v8-lite-mode` (jitless, so it needs no RWX pages): `node -e "console.log(6 * 7)"` prints `42`.
+- **Runs real software** — **nginx** serving HTTPS (`make nginx-test`, `make nginx-tls-test`), and **Node.js 24.16** with bundled **npm** on V8 in `--v8-lite-mode` (jitless, so it needs no RWX pages): `node -e "console.log(6 * 7)"` prints `42` and `npm --version` prints `11.13.0` (`make node-test`, `make npm-test`).
 - **Boots on real hardware** — a bare Hetzner Cloud ARM VM via ACPI + GICv3 + PCIe ECAM/virtio-pci, not just QEMU `virt` (`make hetzner-deploy-test`).
 
 It is a learning project: intentionally minimal, rough in places, and not production. Some pieces stay in C/asm on purpose — third-party code (busybox, the newlib port) and the MMIO / boot / syscall bridges — but the rule is **Swift by default**. The goal is a small, testable, modern core.
@@ -150,11 +150,11 @@ What exists today, in the order it was built:
   runs the existing workloads at `-smp 4`); a persistent, `fsync`-durable **`/data`
   tier** (`datafs` on a dedicated virtio-blk disk, durable enough to back SQLite);
   **nginx** serving static HTTP and **HTTPS/TLS** from the base image and `/data`;
-  **Node.js 24.16** cross-built for SwiftOS and running on V8 in `--v8-lite-mode`
-  (jitless); and a bare-metal **Hetzner Cloud ARM** bring-up (ACPI tables, GICv3,
-  PCIe ECAM + virtio-pci, DHCP, headless boot to `sshd`). Gates: `make smp-test`,
-  `s5-test`, `datafs-sqlite-test`, `nginx-test`, `nginx-tls-test`,
-  `hetzner-deploy-test`.
+  **Node.js 24.16** cross-built for SwiftOS with bundled **npm**, running on V8 in
+  `--v8-lite-mode` (jitless); and a bare-metal **Hetzner Cloud ARM** bring-up (ACPI
+  tables, GICv3, PCIe ECAM + virtio-pci, DHCP, headless boot to `sshd`). Gates:
+  `make smp-test`, `s5-test`, `datafs-sqlite-test`, `nginx-test`, `nginx-tls-test`,
+  `make node-test`, `make npm-test`, `hetzner-deploy-test`.
 
 ## Philosophy
 

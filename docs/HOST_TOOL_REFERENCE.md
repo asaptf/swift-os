@@ -62,6 +62,8 @@ format, manifest, signature, or fixture.
 | `build/modelmanifest` | `make base-image` | Generate verified model bundle manifests. | `./tests/llm_serve_test.sh` |
 | `build/modelsign` | `make base-image` | Generate model signing keys and sign/verify manifests. | `./tests/llm_serve_test.sh` |
 | `build/quantize` | `make model` | Quantize TinyStories checkpoints for AI inference. | `./tests/llm_run_test.sh` |
+| `make node-test` | `make node-test` | Opt-in QEMU smoke: repack `base-image` with `INCLUDE_NODE=1`, then `node --version` and `node -e "console.log(6*7)"` (2 GiB DTB). Requires `build/node.elf` from Docker (`scripts/build-node-docker.sh` + `scripts/link-node.sh`). | `tests/node_test.sh` |
+| `make npm-test` | `make npm-test` | Opt-in QEMU smoke: same node-inclusive image, then `npm --version` (bundled `deps/npm` at `/usr/lib/node_modules/npm`). | `tests/npm_test.sh` |
 
 ## Base Image Packer
 
@@ -237,7 +239,7 @@ paths inside QEMU. See [UPDATE_GUIDE.md](UPDATE_GUIDE.md) for the operator runbo
 `swport` implements the checked ports catalog and recipe subcommands for the
 current twelve-package seed: Lua, zlib, bzip2, zstd, xz, libarchive,
 ca-certificates, OpenSSL, pcre2, tzdata, nginx, and sqlite. It also validates
-the planned curl/acme.sh and blocked Node.js/npm/PM2 intake recipes at
+the planned curl/acme.sh intake recipes and the Node.js/npm/PM2 runtime scaffolds at
 `ports/net/curl/Port.json`, `ports/security/acme-sh/Port.json`,
 `ports/lang/nodejs/Port.json`, `ports/lang/npm/Port.json`, and
 `ports/sysutils/pm2/Port.json`.
