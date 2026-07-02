@@ -23,6 +23,7 @@ user_thread_launch:
     msr     elr_el1, x19
     mov     x0, #0             // SPSR_EL1 = 0: return to EL0t, DAIF clear (IRQ on)
     msr     spsr_el1, x0
+    msr     tpidr_el0, xzr    // crt0 / pthread_trampoline installs per-thread TLS
     isb
     eret
 
@@ -54,6 +55,7 @@ user_thread_launch_arg:
     msr     elr_el1, x19
     mov     x0, #0             // SPSR_EL1 = 0: return to EL0t, DAIF clear (IRQ on)
     msr     spsr_el1, x0
+    msr     tpidr_el0, xzr    // pthread_trampoline installs TLS before user entry
     mov     x0, x22            // deliver the thread argument as entry(arg)
     isb
     eret

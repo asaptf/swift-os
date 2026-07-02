@@ -390,11 +390,40 @@ int lchown(const char *path, uid_t owner, gid_t group) {
 
 /* SwiftOS is effectively single-user; no group lists. */
 int setgroups(int ngroups, const gid_t *list) { (void)ngroups; (void)list; return 0; }
+static int swos_fill_passwd(struct passwd *pwd, char *buf, size_t buflen,
+                            const char *name, uid_t uid, gid_t gid,
+                            const char *dir, const char *shell,
+                            struct passwd **result) {
+    size_t need, nlen, dlen, slen;
+    char *p;
+    if (!pwd || !buf || !result) { return EINVAL; }
+    nlen = strlen(name) + 1;
+    dlen = strlen(dir) + 1;
+    slen = strlen(shell) + 1;
+    need = nlen + dlen + slen;
+    if (buflen < need) { *result = NULL; return ERANGE; }
+    p = buf;
+    pwd->pw_name = p;
+    memcpy(p, name, nlen);
+    p += nlen;
+    pwd->pw_dir = p;
+    memcpy(p, dir, dlen);
+    p += dlen;
+    pwd->pw_shell = p;
+    memcpy(p, shell, slen);
+    pwd->pw_uid = uid;
+    pwd->pw_gid = gid;
+    pwd->pw_passwd = (char *)"";
+    *result = pwd;
+    return 0;
+}
+
 int getpwuid_r(uid_t uid, struct passwd *pwd, char *buf, size_t buflen,
                struct passwd **result) {
-    (void)uid; (void)pwd; (void)buf; (void)buflen;
-    if (result) *result = NULL;
-    return ENOSYS;
+    if (!result) { return EINVAL; }
+    if (uid != 0) { *result = NULL; return 0; }
+    return swos_fill_passwd(pwd, buf, buflen, "root", 0, 0, "/root",
+                            "/bin/busybox", result);
 }
 int getgrgid_r(gid_t gid, struct group *grp, char *buf, size_t buflen,
                struct group **result) {
@@ -517,8 +546,10 @@ int pthread_kill(pthread_t thread, int sig) {
 }
 int getpwnam_r(const char *name, struct passwd *pwd, char *buf, size_t buflen,
                struct passwd **result) {
-    (void)name; (void)pwd; (void)buf; (void)buflen;
-    *result = NULL; return 0;   /* not found: no passwd database */
+    if (!name || !result) { return EINVAL; }
+    if (strcmp(name, "root") != 0) { *result = NULL; return 0; }
+    return swos_fill_passwd(pwd, buf, buflen, "root", 0, 0, "/root",
+                            "/bin/busybox", result);
 }
 int getgrnam_r(const char *name, struct group *grp, char *buf, size_t buflen,
                struct group **result) {
