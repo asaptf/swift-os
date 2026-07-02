@@ -718,7 +718,7 @@ W int eventfd_write(int fd, eventfd_t value) {
  * OpenSSL's TLS-guarded config autoload and thus every algorithm fetch). */
 #define COMPAT_PTHREAD_TID_MAX 64
 #define COMPAT_PTHREAD_NAME_MAX 16
-#define COMPAT_PTHREAD_DEFAULT_STACK (64 * 1024)
+#define COMPAT_PTHREAD_DEFAULT_STACK (2 * 1024 * 1024)
 
 static unsigned int atomic_load_u32(unsigned int *p) {
     return __atomic_load_n(p, __ATOMIC_SEQ_CST);
@@ -1209,10 +1209,10 @@ W int pthread_attr_setstackaddr(pthread_attr_t *attr, void *stackaddr) {
 // and asserts CHECK_GE(stack_start, current_sp); a bogus base aborts node the
 // first time a GC scans the stack. Created threads use their mmap'd record stack;
 // the main thread uses SwiftOS's fixed 16-page stack at the top of the user
-// window (kernel userStackTop=0x9000_0000, userStackPages=16 -> [0x8FFF_0000,
+// window (kernel userStackTop=0x9000_0000, userStackPages=128 -> [0x8FFF_8000,
 // 0x9000_0000)). Keep these in sync with kernel/user/process.swift.
 #define COMPAT_MAIN_STACK_TOP  0x90000000UL
-#define COMPAT_MAIN_STACK_SIZE 0x10000UL   /* 16 * 4096 */
+#define COMPAT_MAIN_STACK_SIZE 0x80000UL   /* 128 * 4096 */
 W int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
     if (!attr) { return EINVAL; }
     if (pthread_attr_init(attr) != 0) { return EAGAIN; }

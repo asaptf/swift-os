@@ -21,14 +21,14 @@
 // this the OS leaked ~2 MiB per command and exhausted RAM after ~100 commands.
 
 private let userStackTop: UInt = 0x9000_0000
-private let userStackPages = 16
+private let userStackPages = 128 // 512 KiB — npm/V8 init needs more than 64 KiB
 private let kernelStackPages = 2 // per-process EL1 stack; freed on reap
 private let userHeapBase: UInt = 0xA000_0000
 
 // Track B — anonymous mmap arena. The valid user window is [0x8000_0000,
 // 0x4_0000_0000) (user_access.swift, 16 GiB). Fixed regions: the ELF image at
-// 0x8000_0000 growing UP (Node is ~57 MiB; busybox ~1.1 MiB); the 16-page user
-// stack at the top of [0x8FFF_0000, 0x9000_0000); the sbrk heap from 0xA000_0000
+// 0x8000_0000 growing UP (Node is ~57 MiB; busybox ~1.1 MiB); the user stack at
+// the top of [0x8FFF_8000, 0x9000_0000) (userStackPages); the sbrk heap from 0xA000_0000
 // growing UP and capped just below the mmap floor (so ~1.5 GiB of heap); and the
 // anonymous mmap arena filling [0x1_0000_0000, 0x4_0000_0000) (12 GiB), growing
 // DOWN from the top. The arena is virtual address space — pages commit from the
@@ -78,6 +78,7 @@ private let kernelLoadOffset: UInt = 0x80000 // kernel links/loads at ramBase + 
 private let trapFrameSPIndex = 31
 private let trapFrameELRIndex = 32
 private let trapFrameSPSRIndex = 33
+private let trapFrameTPIDRIndex = 34 // exceptions.S offset 272: user TLS (tpidr_el0)
 private let trapFrameBytes = 816
 private let trapFrameWords = trapFrameBytes / 8
 private let signalFrameMagic: UInt = 0x5349_4746_5241_4D45 // "SIGFRAME"
@@ -3681,6 +3682,9 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
     frame[trapFrameSPIndex] = userSP
     frame[trapFrameELRIndex] = entry
     frame[trapFrameSPSRIndex] = 0
+    // Fresh ELF entry runs crt0, which builds TLS and sets tpidr_el0; avoid
+    // restoring a stale sibling TLS base from an uninitialized trap-frame slot.
+    frame[trapFrameTPIDRIndex] = 0
     address_space_switch(ttbr0)
     address_space_destroy(oldTtbr0) // now on the new space; old tables are dead
     return 0

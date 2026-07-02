@@ -11,6 +11,7 @@
 //   248     SP_EL0
 //   256     ELR_EL1
 //   264     SPSR_EL1
+//   272     TPIDR_EL0 (user TLS base; must ride along on context switch)
 //   288..799 q0..q31 (16 bytes each)
 //   800     FPCR
 //   808     FPSR
@@ -41,6 +42,8 @@
     str     x9,       [sp, #256]
     mrs     x9, spsr_el1
     str     x9,       [sp, #264]
+    mrs     x9, tpidr_el0
+    str     x9,       [sp, #272]
     stp     q0,  q1,  [sp, #288]
     stp     q2,  q3,  [sp, #320]
     stp     q4,  q5,  [sp, #352]
@@ -90,6 +93,9 @@
     msr     elr_el1, x9
     ldr     x9,       [sp, #264]
     msr     spsr_el1, x9
+    ldr     x9,       [sp, #272]
+    msr     tpidr_el0, x9
+    isb
     ldp     x0,  x1,  [sp, #0]
     ldp     x2,  x3,  [sp, #16]
     ldp     x4,  x5,  [sp, #32]
