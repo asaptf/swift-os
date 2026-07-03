@@ -63,4 +63,11 @@ make -C "$ROOT" busybox \
 echo "==> ci-bootstrap: fetch test models"
 "$ROOT/scripts/fetch-model.sh"
 
+echo "==> ci-bootstrap: prefetch base-image port distfiles"
+make -C "$ROOT" swport
+mkdir -p "$ROOT/build/swport-distfiles"
+for port in databases/sqlite www/nginx security/openssl; do
+    "$ROOT/build/swport" recipe fetch "$port" --cache "$ROOT/build/swport-distfiles"
+done
+
 echo "ci-bootstrap: OK"

@@ -604,7 +604,10 @@ private func downloadData(from url: URL) throws -> Data {
 
     let process = Process()
     process.executableURL = URL(fileURLWithPath: curl)
-    process.arguments = ["-fsSL", "--retry", "3", "--max-time", "600", url.absoluteString]
+    process.arguments = [
+        "-fsSL", "--connect-timeout", "30", "--retry", "3", "--max-time", "600",
+        url.absoluteString,
+    ]
 
     let stdout = Pipe()
     let stderr = Pipe()
