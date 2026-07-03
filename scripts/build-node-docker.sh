@@ -119,14 +119,19 @@ else
   echo "--- configure skipped (out/ already generated; resume incremental) ---"
 fi
 
-# Node's objects have an ORDER-ONLY prereq on $(builddir)/openssl-cli (an exe we
-# don't ship and that can't link freestanding). Node only needs libopenssl.a, not
-# the CLI binary, so drop that prereq token from node.target.mk -- otherwise the
-# node core (libnode.a + node_main.o) never compiles. Idempotent.
-if [ -f out/node.target.mk ] && grep -q 'builddir)/openssl-cli' out/node.target.mk; then
-  echo "--- dropping openssl-cli order-only prereq from node.target.mk ---"
-  sed -i 's@\$(builddir)/openssl-cli@@g' out/node.target.mk
-fi
+# Node/libnode objects have an ORDER-ONLY prereq on $(builddir)/openssl-cli (an exe
+# we don't ship and that can't link freestanding). Node only needs libopenssl.a,
+# not the CLI binary, so drop that prereq from the generated Makefiles and stub
+# the binary so `make libnode` can proceed. Idempotent.
+for mk in out/node.target.mk out/libnode.target.mk; do
+  if [ -f "$mk" ] && grep -q 'builddir)/openssl-cli' "$mk"; then
+    echo "--- dropping openssl-cli order-only prereq from $mk ---"
+    sed -i 's@\$(builddir)/openssl-cli@@g' "$mk"
+  fi
+done
+mkdir -p out/Release
+: > out/Release/openssl-cli
+chmod +x out/Release/openssl-cli
 
 # node-compat shims + masquerade defines, injected to the TARGET toolset only
 # (gyp-make routes env CFLAGS/CXXFLAGS to target; host uses CFLAGS_host).
@@ -151,8 +156,11 @@ if [ -n "${NODE_CLEAN_TARGET:-}" ]; then
 fi
 echo "--- make -k -j${VJOBS} (compile-all; exe links deferred) ---"
 CFLAGS="$TF" CXXFLAGS="$TF" make -k -j"${VJOBS}" -C out BUILDTYPE=Release || true
+echo "--- make libnode (node core static lib) ---"
+CFLAGS="$TF" CXXFLAGS="$TF" make -k -j"${VJOBS}" -C out BUILDTYPE=Release libnode || true
 echo "--- objects/libs built: ---"
 find out/Release/obj.target -name '*.o' | wc -l
+ls -la out/Release/obj.target/libnode.a out/Release/obj.target/node/node_main.o 2>/dev/null || true
 ls -la out/Release/obj.target/*/*.a 2>/dev/null | awk '{print $5, $9}' | head -20
 
 echo "--- result ---"
