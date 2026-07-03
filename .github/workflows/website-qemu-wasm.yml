@@ -30,10 +30,11 @@ jobs:
 
       # The Embedded Swift toolchain + target triple are version-pinned in
       # docs/NOTES.md — install the matching toolchain here.
-      - name: Install Swift Embedded toolchain
-        run: |
-          echo "TODO: install the toolchain pinned in docs/NOTES.md"
-          # e.g. via swiftly / a pinned swift.org nightly, then add to PATH
+      - name: Bootstrap Linux CI toolchains + sysroot
+        run: ./scripts/ci-bootstrap.sh
+
+      - name: Export CI build environment
+        run: ./scripts/ci-export-env.sh
 
       - name: Build kernel + base image + DTB
         run: make build base-image build/virt.dtb

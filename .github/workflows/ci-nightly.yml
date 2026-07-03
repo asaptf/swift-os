@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Nightly full gate (P0): the complete `make test` suite (host + QEMU acceptance).
+# Long-running; scheduled off-peak and available via workflow_dispatch.
+
+name: ci · nightly
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-test:
+    name: make test
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache toolchains and heavy build inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.swift/toolchains
+            ~/.local/arm-gnu-toolchain
+            ~/.local/bin
+            sysroot
+            models
+            build/busybox.elf
+            build/nginx-root
+            build/sqlite-root
+            build/openssl-root
+            build/nginx-certs
+          key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/build-nginx.sh', 'scripts/build-sqlite.sh', 'scripts/build-openssl.sh') }}
+          restore-keys: |
+            bootstrap-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Bootstrap sysroot, busybox, models
+        run: ./scripts/ci-bootstrap.sh
+
+      - name: Export CI build environment
+        run: |
+          echo "SOURCE_DATE_EPOCH=0" >> "$GITHUB_ENV"
+          ./scripts/ci-export-env.sh
+
+      - name: Full test suite
+        run: make test

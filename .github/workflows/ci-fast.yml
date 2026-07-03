@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Fast CI gate (P0): docs + host suites + kernel build + base image + boot smoke.
+# Runs on every push to main and on pull requests.
+
+name: ci · fast
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-fast-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: host-test
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Swift toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.swift/toolchains
+          key: swift-${{ runner.os }}-${{ runner.arch }}-swift-6.3.2-RELEASE
+
+      - name: Install Swift (host tests only)
+        run: ./scripts/ci-install-toolchain.sh
+
+      - name: Export CI host environment
+        run: ./scripts/ci-export-env.sh
+
+      - name: Host unit + docs gate
+        run: make host-test
+
+  qemu-smoke:
+    name: ci-test
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache toolchains and heavy build inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.swift/toolchains
+            ~/.local/arm-gnu-toolchain
+            ~/.local/bin
+            sysroot
+            models
+            build/busybox.elf
+            build/nginx-root
+            build/sqlite-root
+            build/openssl-root
+            build/nginx-certs
+          key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/build-nginx.sh', 'scripts/build-sqlite.sh', 'scripts/build-openssl.sh') }}
+          restore-keys: |
+            bootstrap-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Bootstrap sysroot, busybox, models
+        run: ./scripts/ci-bootstrap.sh
+
+      - name: Export CI build environment
+        run: |
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+          ./scripts/ci-export-env.sh
+
+      - name: Toolchain check
+        run: make tools-check
+
+      - name: Fast CI gate (build + boot smoke)
+        run: make ci-test
+
+      - name: Release manifest
+        run: make release-manifest
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: |
+            build/kernel.elf
+            build/base.img
+            build/virt.dtb
+            build/release-manifest.json
+          retention-days: 14
