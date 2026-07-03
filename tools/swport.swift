@@ -588,6 +588,41 @@ private func runCommand(_ executablePath: String, _ arguments: [String]) throws 
     )
 }
 
+private func downloadData(from url: URL) throws -> Data {
+    let scheme = url.scheme?.lowercased() ?? ""
+    if scheme == "file" || scheme.isEmpty {
+        return try Data(contentsOf: url)
+    }
+    guard scheme == "http" || scheme == "https" else {
+        throw ToolError.message("unsupported URL scheme for fetch: \(url.absoluteString)")
+    }
+
+    let curl = "/usr/bin/curl"
+    guard FileManager.default.isExecutableFile(atPath: curl) else {
+        throw ToolError.message("missing curl for remote fetch of \(url.absoluteString)")
+    }
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: curl)
+    process.arguments = ["-fsSL", "--retry", "3", "--max-time", "600", url.absoluteString]
+
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+    try process.run()
+    process.waitUntilExit()
+
+    let out = stdout.fileHandleForReading.readDataToEndOfFile()
+    let err = stderr.fileHandleForReading.readDataToEndOfFile()
+    guard process.terminationStatus == 0 else {
+        let message = String(decoding: err, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        throw ToolError.message("curl fetch failed for \(url.absoluteString): \(message)")
+    }
+    return out
+}
+
 private func collectStagedFiles(root: URL) throws -> Set<String> {
     let fm = FileManager.default
     var isDir: ObjCBool = false
@@ -753,7 +788,7 @@ private func fetchRecipeCommand(_ spec: String, args: [String]) throws {
     if FileManager.default.isReadableFile(atPath: output.path) {
         data = try Data(contentsOf: output)
     } else {
-        data = try Data(contentsOf: sourceURL)
+        data = try downloadData(from: sourceURL)
         try data.write(to: output, options: .atomic)
     }
     let digest = sha256Hex(data)

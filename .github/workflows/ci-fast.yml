@@ -62,6 +62,7 @@ jobs:
             build/sqlite-root
             build/openssl-root
             build/nginx-certs
+            build/swport-distfiles
           key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/build-nginx.sh', 'scripts/build-sqlite.sh', 'scripts/build-openssl.sh') }}
           restore-keys: |
             bootstrap-${{ runner.os }}-${{ runner.arch }}-
