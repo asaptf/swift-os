@@ -310,6 +310,10 @@ The syscall numbers below must match `userland/lib/syscall.h` and
 | 113 | `kernel_install_write` | `buf`, `count` | bytes accepted or negative error (append kernel-image bytes to the inactive ESP slot; needs `capConsole`) |
 | 114 | `kernel_install_commit` | `entry` | 0 or negative error (verify hash + per-slot signature and write the signed manifest entry; needs `capConsole`) |
 | 115 | `kernel_install_abort` | none | 0 or negative error (discard an in-progress kernel install; needs `capConsole`) |
+| 116 | `recovery_mode` | none | 1 if the kernel booted in recovery mode (K4), else 0 |
+| 117 | `get_winsize` | none | `(rows<<16)|cols` of the framebuffer text console (0 if serial-only); backs `ioctl(TIOCGWINSZ)` |
+| 118 | `mount` | `selector`, `mountpoint`, `flags` | 0 or negative error (runtime capability-gated datafs mount; needs `capConsole`) |
+| 119 | `unmount` | `mountpoint` | 0 or negative error (tear down a runtime graft and release the datafs slot; needs `capConsole`) |
 
 Notes:
 
@@ -1511,7 +1515,15 @@ int swiftos_unlink(const char *path);
 int swiftos_rename(const char *oldpath, const char *newpath);
 int swiftos_chmod(const char *path, unsigned int mode);
 int swiftos_chown(const char *path, unsigned int owner);
+int swiftos_mount(const char *selector, const char *mountpoint, unsigned long flags);
+int swiftos_unmount(const char *mountpoint);
 ```
+
+`swiftos_mount` and `swiftos_unmount` implement the V3 runtime datafs graft
+path. `selector` names a volume by 32-hex UUID or label; `mountpoint` must be
+`/mnt/<name>`. `flags` combines `SWIFTOS_MOUNT_RO`, `SWIFTOS_MOUNT_PERSIST`, and
+`SWIFTOS_MOUNT_FORMAT_IF_BLANK` from `userland/lib/syscall.h`. Both need
+`CAP_CONSOLE` and return 0 on success or a negative errno.
 
 `swiftos_fsync` flushes an open file's data to stable media for datafs (`/data`)
 durability, returning 0 on success. The mutation helpers (`swiftos_mkdir`
@@ -1587,7 +1599,13 @@ int swiftos_execv(const char *path, char *const argv[]);
 int swiftos_pty_spawn_shell(const char *path, int slave_fd);
 int swiftos_waitpid(int pid, int *status);
 long swiftos_getpid(void);
+int swiftos_recovery_mode(void);
 ```
+
+`swiftos_recovery_mode` reports whether the kernel booted with the recovery
+command line (K4). In recovery mode, `console-login` and `/bin/passwd`
+authenticate against the read-only base identity store only and ignore any
+credential overlay on `/data`.
 
 `swiftos_context_ex` returns both the effective and real identity (see the
 `security_info_ex` syscall above); `swiftos_execv` replaces the current image

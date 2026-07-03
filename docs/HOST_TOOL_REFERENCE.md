@@ -27,7 +27,8 @@ format, manifest, signature, or fixture.
 | Validate or package a source port | Port-specific `make ports-*-repo-fixture` target | `build/swport`, `scripts/build-*.sh` | Port fixture target plus seed repository install test |
 | Publish the static-host seed repository | `make ports-static-host-publish` | `scripts/publish-ports-static-host.sh` | `make package-static-host-repo-install-test` |
 | Verify a hosted repository URL | `make ports-hosted-url-verify-test` | `scripts/verify-ports-hosted-url.sh` | Host URL verification plus DNS repository install test |
-| Build AI model artifacts | `make model`, then `make base-image` | `build/quantize`, `build/modelmanifest`, `build/modelsign` | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh` |
+| Build AI model artifacts | `make model`, then `make base-image` | `build/quantize`, `build/modelmanifest`, `build/modelsign`, `build/ggufdump` | `./tests/llm_run_test.sh`, `./tests/llm_serve_test.sh`, `make gguf-dump-test` |
+| Emit a release manifest | `make release-manifest` | `build/releasemanifest` | `make release-manifest` |
 
 ## Quick Map
 
@@ -62,6 +63,8 @@ format, manifest, signature, or fixture.
 | `build/modelmanifest` | `make base-image` | Generate verified model bundle manifests. | `./tests/llm_serve_test.sh` |
 | `build/modelsign` | `make base-image` | Generate model signing keys and sign/verify manifests. | `./tests/llm_serve_test.sh` |
 | `build/quantize` | `make model` | Quantize TinyStories checkpoints for AI inference. | `./tests/llm_run_test.sh` |
+| `build/ggufdump` | `make ggufdump` | Parse a GGUF model with the shared reader and print header, hyperparameters, tokenizer summary, and tensor table. | `make gguf-dump-test` |
+| `build/releasemanifest` | `make release-manifest` | Emit `build/release-manifest.json` with version, toolchain, git, and artifact SHA-256 metadata. | `make release-manifest` |
 | `make node-test` | `make node-test` | Opt-in QEMU smoke: repack `base-image` with `INCLUDE_NODE=1`, then `node --version` and `node -e "console.log(6*7)"` (2 GiB DTB). Requires `build/node.elf` from Docker (`scripts/build-node-docker.sh` + `scripts/link-node.sh`). | `tests/node_test.sh` |
 | `make npm-test` | `make npm-test` | Opt-in QEMU smoke: same node-inclusive image, then `npm --version` (bundled `deps/npm` at `/usr/lib/node_modules/npm`). | `tests/npm_test.sh` |
 
@@ -385,6 +388,46 @@ make base-image
 
 `modelsign sign` signs the manifest body and writes a `[signature]` table.
 The trust root is staged in the base image as `/etc/swos/model-signing.pub`.
+
+## GGUF Inspector
+
+`ggufdump` parses a GGUF file with the shared reader in `userland/lib/gguf.swift`
+and prints the header, llama hyperparameters, tokenizer summary, and tensor
+table. It is used by the LM5a acceptance gate to prove the reader understands a
+real TinyLlama Q4_K_M GGUF without a GGUF-specific host library.
+
+```text
+ggufdump <model.gguf>
+```
+
+Example:
+
+```sh
+make ggufdump
+build/ggufdump models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+make gguf-dump-test
+```
+
+## Release Manifest Tool
+
+`releasemanifest` emits a JSON release manifest for build artifacts such as
+`build/kernel.elf`, `build/base.img`, and `build/virt.dtb`. It reads `VERSION`
+from the repository root, honors `SOURCE_DATE_EPOCH` for reproducible
+timestamps, and records toolchain, target triple, git commit, dirty flag, and
+signing profile metadata supplied by the Makefile.
+
+```text
+releasemanifest <output.json> <artifact> [<artifact> ...]
+```
+
+Example:
+
+```sh
+make release-manifest
+```
+
+The CI fast gate runs `make release-manifest` and uploads
+`build/release-manifest.json` with the release-candidate artifact bundle.
 
 ## Failure Rules
 

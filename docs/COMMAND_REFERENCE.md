@@ -260,6 +260,23 @@ Notes:
 
 Acceptance coverage: `tests/sudo_test.sh`.
 
+### `passwd`
+
+Change the calling principal's password. The identity store `/etc/swos/passwd`
+lives in the read-only base image; the new password is written as a crash-safe
+overlay on the persistent `/data` tier and merged at login.
+
+```text
+passwd
+```
+
+The program prompts for the current password, then the new password twice. It
+changes only the password of the principal running it (self-service). In recovery
+mode it authenticates against the base store only.
+
+Acceptance coverage: `tests/passwd_change_test.sh`, `tests/passwd_persist_test.sh`,
+`tests/passwd_recovery_test.sh`.
+
 ### `logtail`
 
 Print a serialized tail of the in-memory kernel log ring.
@@ -1670,6 +1687,9 @@ are not the primary operator interface.
 | `satstress` | Fixed-size kernel-pool saturation: each bounded pool (processes, per-process fds, pipes, IPC endpoints) saturates with a clean negative errno rather than a panic, and returns to a usable baseline after release (no slot leak); a tmpfs vnode create/unlink churn stays balanced. | Yes, but prefer the make target. | `tests/saturation_test.sh` |
 | `smprace` | Concurrent cross-CPU resource churn: N copies placed on different CPUs (S5f run-any) hammer the shared frame allocator, VFS/tmpfs, and pipe pools at once; the kernel asserts the S4 lock-boundary guards stay balanced and `pmm_free_count` returns to baseline after every copy is reaped. | Usually launched by the kernel/test harness under `-smp 4`. | `tests/smp_race_stress_test.sh` |
 | `futexprobe` | TH8 raw `SYS_FUTEX` boundaries: `FUTEX_WAIT` with `*uaddr != val` returns 0 without blocking, `FUTEX_WAKE` with no waiters returns 0 without faulting, and one word with several waiters wakes every waiter with no lost wakeup across CPUs (built for `-smp 4`). | Yes, when validating futex boundaries. | `tests/futex_test.sh` |
+| `mountprobe` | V3 runtime `SYS_mount` / `SYS_unmount` driver: mounts a datafs volume by UUID or label at `/mnt/<name>`, exercises `RO`/`PERSIST`/`FORMAT_IF_BLANK` flags, and reports raw return codes for the boot gate. | Yes, for datafs mount diagnostics. | `make v3-mount-test`, `make v3-persist-test`, `make v3-deny-test` |
+| `procmaxprobe` | Process-table growth: forks more than the old 64-slot cap in `globalCell`, parks children on a pipe barrier, then reaps them and proves no slot leak. | Usually launched by the boot test harness. | `make procmax-test` |
+| `simdprobe` | LM1b int8 NEON codegen check: compares forced-scalar and explicit `SIMD16<Int8>` dot products over runtime-seeded data and reports `OK`/`MISMATCH`. | Yes, when validating NEON inference paths. | `tests/simdprobe_test.sh` |
 
 Prefer the commands in the earlier sections for normal use. Use these diagnostic
 commands when validating a specific milestone or investigating a regression.
