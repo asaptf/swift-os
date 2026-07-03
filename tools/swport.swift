@@ -602,28 +602,32 @@ private func downloadData(from url: URL) throws -> Data {
         throw ToolError.message("missing curl for remote fetch of \(url.absoluteString)")
     }
 
+    // Write to a temp file — piping curl stdout into a Process Pipe deadlocks once
+    // the ~64 KiB kernel buffer fills because we only read after waitUntilExit().
+    let temp = FileManager.default.temporaryDirectory
+        .appendingPathComponent("swport-fetch-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: temp) }
+
     let process = Process()
     process.executableURL = URL(fileURLWithPath: curl)
     process.arguments = [
         "-fsSL", "--connect-timeout", "30", "--retry", "3", "--max-time", "600",
+        "-o", temp.path,
         url.absoluteString,
     ]
 
-    let stdout = Pipe()
     let stderr = Pipe()
-    process.standardOutput = stdout
     process.standardError = stderr
     try process.run()
     process.waitUntilExit()
 
-    let out = stdout.fileHandleForReading.readDataToEndOfFile()
     let err = stderr.fileHandleForReading.readDataToEndOfFile()
     guard process.terminationStatus == 0 else {
         let message = String(decoding: err, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         throw ToolError.message("curl fetch failed for \(url.absoluteString): \(message)")
     }
-    return out
+    return try Data(contentsOf: temp)
 }
 
 private func collectStagedFiles(root: URL) throws -> Set<String> {
