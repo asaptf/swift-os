@@ -84,5 +84,8 @@ jobs:
       - name: Production boot profile smoke
         run: make prod-boot-test
 
-      - name: Hetzner deploy regression
+      - name: Hetzner deploy pipeline (build stage)
+        run: make hetzner-deploy-pipeline-test
+
+      - name: Hetzner deploy regression (QEMU topology)
         run: make hetzner-deploy-test

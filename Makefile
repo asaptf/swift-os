@@ -12,6 +12,7 @@
 #   make release-manifest Emit build/release-manifest.json for release artifacts.
 #   make ci-test   ci-fast (CI gate).
 #   make base-image-prod / prod-boot-test  Production hosting profile (P1.4).
+#   make hetzner-deploy-build / hetzner-deploy-pipeline-test  Hetzner pipeline (P1.2).
 #   make smp-test Build, then run the pre-S0 SMP boot smoke.
 #   make clean   Remove build artifacts.
 #
@@ -2847,7 +2848,7 @@ hetzner-deploy-test: build $(SSHKEY)
 	rm -f $(BASE_IMG) $(DISK_IMG)   # restore: the prod base.img is deploy-specific, not the default
 
 # P1.4: production hosting boot profile — supervised services, locked passwords.
-.PHONY: base-image-prod prod-boot-test
+.PHONY: base-image-prod prod-boot-test hetzner-deploy-build hetzner-deploy-preflight hetzner-deploy-pipeline-test hetzner-deploy-health hetzner-deploy-promote
 base-image-prod:
 	$(MAKE) base-image BASE_PROFILE=prod
 
@@ -2856,6 +2857,26 @@ prod-boot-test: build $(QEMU_DTB)
 	$(MAKE) base-image BASE_PROFILE=prod
 	chmod +x ./tests/prod_boot_test.sh
 	./tests/prod_boot_test.sh
+
+# P1.2: Hetzner deploy pipeline — build, local preflight, health, promote.
+hetzner-deploy-build: build $(SSHKEY)
+	chmod +x ./scripts/hetzner-deploy*.sh
+	./scripts/hetzner-deploy-build.sh
+
+hetzner-deploy-preflight: hetzner-deploy-build
+	./tests/hetzner_deploy_test.sh
+
+hetzner-deploy-pipeline-test: build $(SSHKEY)
+	chmod +x ./scripts/hetzner-deploy*.sh ./tests/hetzner_deploy_pipeline_test.sh
+	./tests/hetzner_deploy_pipeline_test.sh
+
+hetzner-deploy-health:
+	chmod +x ./scripts/hetzner-deploy*.sh
+	./scripts/hetzner-deploy-health.sh
+
+hetzner-deploy-promote:
+	chmod +x ./scripts/hetzner-deploy*.sh
+	./scripts/hetzner-deploy-promote.sh
 
 # D0: persistent /data disk survives reboot. Base-image optional (the D0 marker
 # is emitted before vfsInit), so this focused gate runs without the full image.
