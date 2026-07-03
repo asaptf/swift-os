@@ -258,8 +258,8 @@ USER_SWIFT_FLAGS_NEON := \
 # Newlib-linked userland: aarch64-elf GNU toolchain + ./sysroot (run `make newlib`).
 SYSROOT        := sysroot/aarch64-elf
 NEWLIB_GCC     := aarch64-elf-gcc
-NEWLIB_CFLAGS  := -ffreestanding -Os -Wall -isystem $(SYSROOT)/include -c
-NEWLIB_COMPAT_CFLAGS := -ffreestanding -Os -Wall -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -isystem userland/compat -isystem $(SYSROOT)/include -c
+NEWLIB_CFLAGS  := -ffreestanding -Os -Wall -D__DYNAMIC_REENT__ -isystem $(SYSROOT)/include -c
+NEWLIB_COMPAT_CFLAGS := -ffreestanding -Os -Wall -D__DYNAMIC_REENT__ -D_REENTRANT -D_POSIX_THREADS -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 -isystem userland/compat -isystem $(SYSROOT)/include -c
 # Node.js/libuv masquerade compat: node-compat shims ahead of compat, with the
 # Linux + newlib feature-test macros the masquerade needs (see scripts/build-node.sh).
 NODE_COMPAT_CFLAGS := -ffreestanding -Os -Wall -D_GNU_SOURCE -D__linux__ -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 -D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 -isystem userland/node-compat -isystem userland/compat -isystem $(SYSROOT)/include -c
@@ -363,6 +363,7 @@ USER_ENVCHILD_ELF := $(BUILD)/envchild.elf
 # compiles all objects; scripts/link-node.sh does the freestanding final link).
 # The heavy build runs out-of-band; `make` only stages the resulting binary.
 USER_NODE_ELF := $(BUILD)/node.elf
+USER_NPM_LAUNCHER_ELF := $(BUILD)/npm.elf
 # Packing the ~57 MB node.elf into base.img bloats every image build/sign and the
 # disk every QEMU test loads, for a binary only the node/npm tests use. So it is
 # OPT-IN: `make base-image INCLUDE_NODE=1` (or `make node-test`) stages /bin/node;
@@ -376,16 +377,30 @@ INCLUDE_NODE ?= 0
 NODE_SRC_DIR := $(BUILD)/node-docker-work/node-v24.16.0
 NPM_SRC_DIR  := $(NODE_SRC_DIR)/deps/npm
 ifeq ($(INCLUDE_NODE),1)
-NODE_BASE_ELFS := $(USER_NODE_ELF)
+NODE_BASE_ELFS := $(USER_NODE_ELF) $(USER_NPM_LAUNCHER_ELF)
 NODE_PACK_CMD := cp $(USER_NODE_ELF) $(BASE_ROOT)/bin/node; \
 	if [ -d "$(NPM_SRC_DIR)" ]; then \
 	  mkdir -p $(BASE_ROOT)/usr/lib/node_modules; \
 	  rm -rf $(BASE_ROOT)/usr/lib/node_modules/npm; \
 	  cp -R $(NPM_SRC_DIR) $(BASE_ROOT)/usr/lib/node_modules/npm; \
-	  printf '%s\n' '\#!/bin/node' 'require("/usr/lib/node_modules/npm/lib/cli.js")(process)' > $(BASE_ROOT)/bin/npm; \
-	  chmod +x $(BASE_ROOT)/bin/npm; \
+	  cp userland/node-compat/npm-cli-swos.js $(BASE_ROOT)/bin/npm-cli-swos.js; \
+	  chmod +x $(BASE_ROOT)/bin/npm-cli-swos.js; \
+	  cp userland/node-compat/npm-cli-swos.js $(BASE_ROOT)/usr/lib/node_modules/npm/bin/npm-cli.js; \
+	  chmod +x $(BASE_ROOT)/usr/lib/node_modules/npm/bin/npm-cli.js; \
+	  cp userland/node-compat/npm-swos.sh $(BASE_ROOT)/usr/lib/npm-swos.sh; \
+	  chmod +x $(BASE_ROOT)/usr/lib/npm-swos.sh; \
+	  cp $(USER_NPM_LAUNCHER_ELF) $(BASE_ROOT)/bin/npm; \
 	  echo "  (npm staged at /usr/lib/node_modules/npm + /bin/npm)"; \
-	else echo "  (npm NOT staged — $(NPM_SRC_DIR) absent)"; fi
+	else echo "  (npm NOT staged — $(NPM_SRC_DIR) absent)"; fi; \
+	mkdir -p $(BASE_ROOT)/etc/ssl $(BASE_ROOT)/usr/share/npm-fixture; \
+	cp tests/fixtures/npm-registry/swos-smoke-1.0.0.tgz tests/fixtures/npm-registry/is-odd-3.0.1.tgz tests/fixtures/npm-registry/is-number-6.0.0.tgz $(BASE_ROOT)/usr/share/npm-fixture/ 2>/dev/null || true; \
+	rm -rf $(BASE_ROOT)/usr/share/npm-fixture/swos-smoke; \
+	mkdir -p $(BASE_ROOT)/usr/share/npm-fixture/swos-smoke; \
+	tar -xzf tests/fixtures/npm-registry/swos-smoke-1.0.0.tgz -C $(BASE_ROOT)/usr/share/npm-fixture/swos-smoke 2>/dev/null || true; \
+	if [ -f "$(BUILD)/swport-distfiles/cacert-2026-05-14.pem" ]; then \
+	  cp "$(BUILD)/swport-distfiles/cacert-2026-05-14.pem" $(BASE_ROOT)/etc/ssl/cert.pem; \
+	  echo "  (Mozilla CA bundle staged at /etc/ssl/cert.pem for npm HTTPS)"; \
+	else echo "  (CA bundle NOT staged — run: ./build/swport recipe fetch security/ca-certificates)"; fi
 else
 NODE_BASE_ELFS :=
 NODE_PACK_CMD := echo "  (node.elf NOT packed — build with INCLUDE_NODE=1 for /bin/node)"
@@ -1722,6 +1737,12 @@ $(USER_EPOLLPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_epollprobe.o $(BUILD)/n_nod
 # Node.js is cross-built out-of-band in Docker (it can't build in this Makefile's
 # macOS host toolchain). This guard only fires when build/node.elf is absent: it
 # never triggers the multi-hour Docker build implicitly, it just explains how.
+$(BUILD)/n_npmlauncher.o: userland/npm_launcher.c Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_CFLAGS) $< -o $@
+
+$(USER_NPM_LAUNCHER_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_npmlauncher.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_npmlauncher.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
 $(USER_NODE_ELF):
 	@test -f $@ || { echo "ERROR: $@ missing. Build Node for SwiftOS with:"; \
 	  echo "  ./scripts/build-node-docker.sh   # build image + compile all objects"; \
@@ -3848,7 +3869,7 @@ node-configure-probe: $(SYSROOT)/lib/libc.a ports/lang/nodejs/Port.json scripts/
 # `rm -f $(BASE_IMG)` guarantees the repack happens even when a default
 # (node-less) image is newer than node.elf, which make's mtime check would
 # otherwise treat as up-to-date.
-.PHONY: node-test npm-test
+.PHONY: node-test npm-test node-http-test npm-install-test node-runtime-test
 node-test: build $(QEMU_DTB_2048) $(USER_NODE_ELF)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_NODE=1
@@ -3858,6 +3879,19 @@ npm-test: build $(QEMU_DTB_2048) $(USER_NODE_ELF)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_NODE=1
 	NODE_DTB=$(QEMU_DTB_2048) bash tests/npm_test.sh
+
+node-http-test: build $(QEMU_DTB_2048) $(USER_NODE_ELF)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_NODE=1
+	NODE_DTB=$(QEMU_DTB_2048) bash tests/node_http_test.sh
+
+npm-install-test: build $(QEMU_DTB_2048) $(USER_NODE_ELF)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_NODE=1
+	NODE_DTB=$(QEMU_DTB_2048) bash tests/npm_install_test.sh
+
+# Aggregate Node.js runtime gate: version/eval, npm --version, HTTP server, local-registry install.
+node-runtime-test: node-test npm-test node-http-test npm-install-test
 
 ports-seed-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/catalog.json $(PORT_RECIPE_FILES) $(PORT_BUILD_SCRIPTS)
 	./scripts/build-ports-seed-repo.sh

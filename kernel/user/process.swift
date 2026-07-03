@@ -21,7 +21,7 @@
 // this the OS leaked ~2 MiB per command and exhausted RAM after ~100 commands.
 
 private let userStackTop: UInt = 0x9000_0000
-private let userStackPages = 128 // 512 KiB — npm/V8 init needs more than 64 KiB
+private let userStackPages = 512 // 2 MiB — npm install deep libc/npm call stacks exceed 512 KiB
 private let kernelStackPages = 2 // per-process EL1 stack; freed on reap
 private let userHeapBase: UInt = 0xA000_0000
 

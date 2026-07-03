@@ -7,7 +7,7 @@
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
-static pthread_once_t once = PTHREAD_ONCE_INIT;
+static pthread_once_t once;
 static pthread_key_t worker_key;
 static int once_count;
 static int done_count;

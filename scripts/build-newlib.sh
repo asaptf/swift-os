@@ -29,6 +29,7 @@ rm -rf build && mkdir build && cd build
     --target=aarch64-elf \
     --prefix="$SYSROOT" \
     --disable-newlib-supplied-syscalls \
+    CFLAGS_FOR_TARGET="-D__DYNAMIC_REENT__" \
     CC_FOR_TARGET=aarch64-elf-gcc \
     AS_FOR_TARGET=aarch64-elf-as \
     AR_FOR_TARGET=aarch64-elf-ar \

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // linux/futex.h - FUTEX_* op constants for the masquerade. Abseil's spinlock and
-// V8's Atomics futex emulation reference these. node_compat.c's syscall() returns
-// -ENOSYS for SYS_futex for now, so Abseil's spinlock degrades to spinning
-// (correct, just busier) and V8 Atomics.wait/notify is unsupported — a deferred
-// refinement, not a blocker for normal execution.
+// V8's Atomics futex emulation reference these. node_compat.c's syscall()
+// routes SYS_futex (__NR_futex=98) to SwiftOS syscall 49 (WAIT/WAKE); PRIVATE
+// and BITSET op bits are stripped before the kernel trap.
 #ifndef _SWOS_NODE_COMPAT_LINUX_FUTEX_H
 #define _SWOS_NODE_COMPAT_LINUX_FUTEX_H
 

@@ -57,8 +57,27 @@
 #include <iconv.h>
 #include <langinfo.h>
 #include <utime.h>
+#include <malloc.h>
+#include <sys/reent.h>
 
 #define W __attribute__((weak))
+
+/* __DYNAMIC_REENT__: route all threads through the single global _impure_data.
+ * newlib's malloc uses the process-wide __malloc_av_ arena (sbrk); giving each
+ * pthread its own struct _reent made errno/stdio independent but still shared the
+ * same heap — npm install intermittently SIGSEGV'd in _malloc_r while walking
+ * corrupted freelists. Per-thread reent is reserved for a future split-heap
+ * design; until then one reent + __malloc_lock is the safe model. */
+extern struct _reent _impure_data;
+extern struct _reent *_impure_ptr;
+
+void __swos_bind_main_reent(void) {
+    _impure_ptr = &_impure_data;
+}
+
+struct _reent *__getreent(void) {
+    return _impure_ptr ? _impure_ptr : &_impure_data;
+}
 
 extern char **environ;
 
@@ -704,7 +723,7 @@ W int eventfd_write(int fd, eventfd_t value) {
 #define COMPAT_RWLOCK_STATIC ((unsigned int)0xFFFFFFFFu)
 #define COMPAT_RWLOCK_WRITER ((unsigned int)0x80000000u)
 #define COMPAT_RWLOCK_READER_MASK ((unsigned int)0x7FFFFFFFu)
-#define COMPAT_PTHREAD_MAX_THREADS 16
+#define COMPAT_PTHREAD_MAX_THREADS 64
 #define COMPAT_PTHREAD_MAX_KEYS 32
 #define COMPAT_PTHREAD_MAX_ATFORK 16
 #define COMPAT_PTHREAD_MAX_MUTEXES 32
@@ -765,6 +784,54 @@ static void futex_unlock_word(unsigned int *word) {
     }
 }
 
+/* newlib malloc is shared across pthreads (Node/V8/libuv). Without these hooks
+ * concurrent allocators corrupt the heap once futex-backed blocking works.
+ * Recursion depth is per-thread TLS (not a global owner pid): on SMP a stale
+ * cached owner let a second thread re-enter malloc without taking the lock
+ * (intermittent SIGSEGV in _malloc_r/_free_r during npm install). */
+static unsigned int malloc_heap_lock;
+static __thread unsigned int malloc_lock_depth;
+
+void __malloc_lock(struct _reent *reent) {
+    (void)reent;
+    if (malloc_lock_depth++ != 0) { return; }
+    futex_lock_word(&malloc_heap_lock);
+}
+
+void __malloc_unlock(struct _reent *reent) {
+    (void)reent;
+    if (malloc_lock_depth == 0) { return; }
+    if (--malloc_lock_depth != 0) { return; }
+    futex_unlock_word(&malloc_heap_lock);
+}
+
+extern void *_malloc_r(struct _reent *, size_t);
+
+static void *swos_calloc_locked(struct _reent *r, size_t nelem, size_t elsize) {
+    if (nelem != 0 && elsize > (size_t)-1 / nelem) {
+        if (r) { _REENT_ERRNO(r) = ENOMEM; }
+        return NULL;
+    }
+    size_t sz = nelem * elsize;
+    __malloc_lock(r);
+    void *p = _malloc_r(r, sz);
+    if (p) { memset(p, 0, sz); }
+    __malloc_unlock(r);
+    return p;
+}
+
+/* newlib _calloc_r unlocks before memset; another thread can claim the same
+ * chunk or coalesce metadata while zeroing — nghttp2_session_callbacks_new
+ * hit this as an intermittent _malloc_r SIGSEGV during npm install. Override
+ * both public calloc and _calloc_r (libc internals call the latter directly). */
+void *calloc(size_t nelem, size_t elsize) {
+    return swos_calloc_locked(__getreent(), nelem, elsize);
+}
+
+void *_calloc_r(struct _reent *r, size_t nelem, size_t elsize) {
+    return swos_calloc_locked(r, nelem, elsize);
+}
+
 static unsigned int pthread_global_lock;
 
 struct compat_pthread_atfork_handler {
@@ -791,6 +858,10 @@ struct compat_pthread_record {
     void *stack;
     size_t stack_size;
     int stack_owned;
+    void *tls_block;
+    size_t tls_size;
+    void *reent_block;
+    size_t reent_size;
     void *(*start)(void *);
     void *arg;
     char name[COMPAT_PTHREAD_NAME_MAX];
@@ -1007,15 +1078,29 @@ static void pthread_record_clear_locked(struct compat_pthread_record *rec) {
 static void pthread_release_record(struct compat_pthread_record *rec, int unmap_stack) {
     void *stack = 0;
     size_t stack_size = 0;
+    void *tls = 0;
+    size_t tls_size = 0;
     if (unmap_stack && rec->stack_owned) {
         stack = rec->stack;
         stack_size = rec->stack_size;
     }
+    if (rec->tls_block) {
+        tls = rec->tls_block;
+        tls_size = rec->tls_size;
+    }
+    void *reent = rec->reent_block;
+    size_t reent_size = rec->reent_size;
     futex_lock_word(&pthread_global_lock);
     pthread_record_clear_locked(rec);
     futex_unlock_word(&pthread_global_lock);
     if (stack && stack_size) {
         (void)munmap(stack, stack_size);
+    }
+    if (tls && tls_size) {
+        (void)munmap(tls, tls_size);
+    }
+    if (reent && reent_size) {
+        (void)munmap(reent, reent_size);
     }
 }
 
@@ -1102,15 +1187,11 @@ static void pthread_trampoline(unsigned long arg) {
     while (atomic_load_u32(&rec->tid) == 0) {
         (void)futex_raw(&rec->tid, COMPAT_FUTEX_WAIT, 0);
     }
-    // Give this thread its own native-TLS block + tpidr_el0. crt0 only set up
-    // the main thread; without this, a created thread's __thread / thread_local
-    // (V8 worker threads use it heavily) reads tpidr_el0=0 and faults. Page-
-    // aligned mmap is >=16-aligned and large enough; it leaks at thread exit
-    // (threads are bounded), which is acceptable.
-    unsigned long tlssz = (__swos_tls_blocksize() + 4095UL) & ~4095UL;
-    void *tlsblk = mmap(0, tlssz, PROT_READ | PROT_WRITE,
-                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (tlsblk != MAP_FAILED) { __swos_tls_setup(tlsblk); }
+    // TLS was reserved in pthread_create; without a per-thread block, __thread
+    // vars (including malloc_lock_depth) alias the main thread's TLS and heap
+    // locks become no-ops across workers — intermittent _malloc_r SIGSEGV.
+    if (!rec->tls_block) { pthread_exit(0); }
+    __swos_tls_setup(rec->tls_block);
     void *retval = rec->start(rec->arg);
     pthread_exit(retval);
 }
@@ -1209,10 +1290,10 @@ W int pthread_attr_setstackaddr(pthread_attr_t *attr, void *stackaddr) {
 // and asserts CHECK_GE(stack_start, current_sp); a bogus base aborts node the
 // first time a GC scans the stack. Created threads use their mmap'd record stack;
 // the main thread uses SwiftOS's fixed 16-page stack at the top of the user
-// window (kernel userStackTop=0x9000_0000, userStackPages=128 -> [0x8FFF_8000,
+// window (kernel userStackTop=0x9000_0000, userStackPages=512 -> [0x8FFE_0000,
 // 0x9000_0000)). Keep these in sync with kernel/user/process.swift.
 #define COMPAT_MAIN_STACK_TOP  0x90000000UL
-#define COMPAT_MAIN_STACK_SIZE 0x80000UL   /* 128 * 4096 */
+#define COMPAT_MAIN_STACK_SIZE 0x200000UL  /* 512 * 4096 */
 W int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
     if (!attr) { return EINVAL; }
     if (pthread_attr_init(attr) != 0) { return EAGAIN; }
@@ -1744,6 +1825,7 @@ W int pthread_barrier_wait(pthread_barrier_t *barrier) {
 W int pthread_create(pthread_t *pthread, const pthread_attr_t *attr,
                      void *(*start_routine)(void *), void *arg) {
     if (!pthread || !start_routine) { return EINVAL; }
+
     size_t stack_size = COMPAT_PTHREAD_DEFAULT_STACK;
     void *stack = 0;
     int stack_owned = 1;
@@ -1776,9 +1858,32 @@ W int pthread_create(pthread_t *pthread, const pthread_attr_t *attr,
         }
     }
 
+    unsigned long tlssz = (__swos_tls_blocksize() + 4095UL) & ~4095UL;
+    void *tlsblk = mmap(0, tlssz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (tlsblk == MAP_FAILED) {
+        if (stack_owned) { (void)munmap(stack, stack_size); }
+        pthread_release_record(rec, 0);
+        return errno ? errno : ENOMEM;
+    }
+
+    size_t reentsz = (sizeof(struct _reent) + 4095UL) & ~4095UL;
+    void *reentblk = mmap(0, reentsz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (reentblk == MAP_FAILED) {
+        if (stack_owned) { (void)munmap(stack, stack_size); }
+        (void)munmap(tlsblk, tlssz);
+        pthread_release_record(rec, 0);
+        return errno ? errno : ENOMEM;
+    }
+    memset(reentblk, 0, sizeof(struct _reent));
+    _REENT_INIT_PTR_ZEROED((struct _reent *)reentblk);
+
     rec->stack = stack;
     rec->stack_size = stack_size;
     rec->stack_owned = stack_owned;
+    rec->tls_block = tlsblk;
+    rec->tls_size = (size_t)tlssz;
+    rec->reent_block = reentblk;
+    rec->reent_size = reentsz;
     rec->detached = (detached == PTHREAD_CREATE_DETACHED);
     rec->start = start_routine;
     rec->arg = arg;
@@ -1788,6 +1893,12 @@ W int pthread_create(pthread_t *pthread, const pthread_attr_t *attr,
     if (tid < 0) {
         int err = (int)-tid;
         if (stack_owned) { (void)munmap(stack, stack_size); }
+        (void)munmap(tlsblk, tlssz);
+        (void)munmap(reentblk, reentsz);
+        rec->tls_block = 0;
+        rec->tls_size = 0;
+        rec->reent_block = 0;
+        rec->reent_size = 0;
         pthread_release_record(rec, 0);
         return err;
     }
@@ -1904,23 +2015,24 @@ W void pthread_yield(void) {}
 
 W int pthread_once(pthread_once_t *once_control, void (*init_routine)(void)) {
     if (!once_control || !init_routine) { return EINVAL; }
-    if (!once_control->is_initialized) { once_control->is_initialized = 1; }
+    /* Match Linux/glibc layout: one 32-bit word (0/1/2). OpenSSL CRYPTO_ONCE and
+     * libuv uv_once_t are only 4 bytes in the Node/openssl objects; never read a
+     * second word — that was aliasing adjacent .bss and re-entering OpenSSL init. */
+    unsigned int *state = (unsigned int *)once_control;
     for (;;) {
-        int state = __atomic_load_n(&once_control->init_executed, __ATOMIC_SEQ_CST);
-        if (state == 2) { return 0; }
-        if (state == 0) {
-            int expected = 0;
-            if (__atomic_compare_exchange_n(&once_control->init_executed, &expected, 1, 0,
+        unsigned int s = __atomic_load_n(state, __ATOMIC_SEQ_CST);
+        if (s == 2) { return 0; }
+        if (s == 0) {
+            unsigned int expected = 0;
+            if (__atomic_compare_exchange_n(state, &expected, 1, 0,
                                             __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
                 init_routine();
-                __atomic_store_n(&once_control->init_executed, 2, __ATOMIC_SEQ_CST);
-                (void)futex_raw((unsigned int *)&once_control->init_executed,
-                                COMPAT_FUTEX_WAKE, UINT_MAX);
+                __atomic_store_n(state, 2, __ATOMIC_SEQ_CST);
+                (void)futex_raw(state, COMPAT_FUTEX_WAKE, UINT_MAX);
                 return 0;
             }
         }
-        (void)futex_raw((unsigned int *)&once_control->init_executed,
-                        COMPAT_FUTEX_WAIT, 1);
+        (void)futex_raw(state, COMPAT_FUTEX_WAIT, 1);
     }
 }
 

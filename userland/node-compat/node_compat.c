@@ -40,6 +40,46 @@
 #include <dlfcn.h>
 #include <link.h>
 #include <ucontext.h>
+#include <linux/futex.h>
+
+#define SWOS_SYS_FUTEX 49
+#define SWOS_SYS_MKDIR 29
+
+static long swos_sys3(long n, long a0, long a1, long a2) {
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a0;
+    register long x1 __asm__("x1") = a1;
+    register long x2 __asm__("x2") = a2;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2) : "memory");
+    return x0;
+}
+
+static int swos_futex_normalize_op(int op) {
+    int base = op & ~FUTEX_PRIVATE_FLAG;
+    if (base == FUTEX_WAIT_BITSET ||
+        base == (FUTEX_WAIT_BITSET | FUTEX_CLOCK_REALTIME)) {
+        return FUTEX_WAIT;
+    }
+    if (base == FUTEX_WAKE_BITSET) {
+        return FUTEX_WAKE;
+    }
+    if (base == FUTEX_WAIT || base == FUTEX_WAKE) {
+        return base;
+    }
+    return -1;
+}
+
+static long swos_futex(unsigned int *uaddr, int op, unsigned int val,
+                       const void *utime, void *uaddr2, int val3) {
+    (void)utime;
+    (void)uaddr2;
+    (void)val3;
+    int base = swos_futex_normalize_op(op);
+    if (base < 0) { errno = ENOSYS; return -1; }
+    long r = swos_sys3(SWOS_SYS_FUTEX, (long)uaddr, base, (long)val);
+    if (r < 0) { errno = (int)-r; return -1; }
+    return r;
+}
 
 /* ----- epoll over poll ---------------------------------------------------- */
 
@@ -247,6 +287,11 @@ long syscall(long number, ...) {
         /* OpenSSL's DRBG seeds via syscall(__NR_getrandom) on Linux; route it to
          * the SwiftOS virtio-rng entropy source so RAND_status() reports ready. */
         return (long)getrandom((void *)a0, (size_t)a1, (unsigned int)a2);
+    case __NR_futex:
+        /* Abseil/V8 call syscall(SYS_futex=98) with FUTEX_* ops. SwiftOS futex
+         * is syscall 49 and only implements WAIT/WAKE; strip PRIVATE/BITSET here. */
+        return swos_futex((unsigned int *)a0, (int)a1, (unsigned int)a2,
+                          (const void *)a3, (void *)a4, (int)a5);
     default:
         errno = ENOSYS;
         return -1;
@@ -512,6 +557,52 @@ int swapcontext(ucontext_t *oucp, const ucontext_t *ucp) {
     (void)oucp; (void)ucp; errno = ENOSYS; return -1;
 }
 
+/* ----- npm default cache/prefix (bare shell has no HOME/npm dirs) ------------
+ * Without writable prefix/cache npm config/install walk invalid paths and crash
+ * in native helpers (CRYPTO_malloc during install init). Set before OpenSSL/npm. */
+static void swos_mkdir_one(const char *path) {
+    (void)swos_sys3(SWOS_SYS_MKDIR, (long)path, 0755, 0);
+}
+
+extern void _tzset_unlocked(void);
+
+__attribute__((constructor(2)))
+static void swos_npm_default_paths(void) {
+    setenv("HOME", "/tmp", 0);
+    setenv("TMPDIR", "/tmp", 0);
+    setenv("TZ", "UTC", 1);
+    _tzset_unlocked();
+    setenv("NPM_CONFIG_PREFIX", "/tmp/npm-prefix", 0);
+    setenv("NPM_CONFIG_CACHE", "/tmp/npm-cache", 0);
+    setenv("NPM_CONFIG_LOGS_MAX", "0", 0);
+    setenv("NPM_CONFIG_UPDATE_NOTIFIER", "false", 0);
+    swos_mkdir_one("/tmp/npm-prefix");
+    swos_mkdir_one("/tmp/npm-cache");
+}
+
+/* ----- OpenSSL bring-up (main thread, before ncrypto C++ globals) ------------
+ * npm config/install load ncrypto, whose global constructors call
+ * evp_get_cipherbyname -> OPENSSL_init_crypto -> pthread_once -> cipher tables.
+ * Concurrent once + CRYPTO_malloc from worker threads corrupted the shared heap.
+ * Finish OpenSSL init from a low-priority constructor on the main thread while
+ * TLS is live and before libuv/V8 workers exist. */
+#define SWOS_OPENSSL_INIT_ADD_ALL_CIPHERS       0x00000004ULL
+#define SWOS_OPENSSL_INIT_ADD_ALL_DIGESTS       0x00000008ULL
+#define SWOS_OPENSSL_INIT_LOAD_CRYPTO_STRINGS   0x00000002ULL
+extern int OPENSSL_init_crypto(unsigned long long opts, const void *settings)
+    __attribute__((weak));
+
+__attribute__((constructor(10)))
+static void swos_openssl_early_init(void) {
+    if (!OPENSSL_init_crypto) {
+        return;
+    }
+    (void)OPENSSL_init_crypto(SWOS_OPENSSL_INIT_LOAD_CRYPTO_STRINGS
+        | SWOS_OPENSSL_INIT_ADD_ALL_CIPHERS
+        | SWOS_OPENSSL_INIT_ADD_ALL_DIGESTS,
+        0);
+}
+
 /* ----- OpenSSL CPU-probe suppression --------------------------------------
  * OpenSSL detects optional Arm crypto extensions (AES, SHA, PMULL, and also
  * SM3/SM4/SVE2) by *executing* a candidate instruction and catching the SIGILL
@@ -519,13 +610,13 @@ int swapcontext(ucontext_t *oucp, const ucontext_t *ucp) {
  * does not yet deliver SIGILL to EL0 for an undefined instruction -- it panics
  * the kernel -- so the probe is fatal. OpenSSL skips the whole SIGILL dance when
  * the OPENSSL_armcap env var is set, falling back to portable C crypto. Set it
- * to 0 from a high-priority constructor so it lands before OpenSSL's own
- * cpuid-setup constructor reads it. (environ is live: crt0 sets it before the
- * .init_array loop that runs these constructors.) */
-__attribute__((constructor(101)))
+ * to 0 before swos_openssl_early_init reads hardware caps. */
+__attribute__((constructor(5)))
 static void swos_disable_openssl_cpu_probe(void) {
     setenv("OPENSSL_armcap", "0", 1);
 }
+
+
 
 /* ----- freestanding-link support ------------------------------------------
  * Symbols that V8 and libstdc++ reference but a bare-metal newlib/libstdc++ on

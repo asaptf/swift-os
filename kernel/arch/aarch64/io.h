@@ -482,6 +482,16 @@ static inline void write_cntp_tval_el0(uint64_t value) {
     __asm__ volatile("msr cntp_tval_el0, %0; isb" :: "r"(value) : "memory");
 }
 
+static inline uint64_t read_cntkctl_el1(void) {
+    uint64_t value;
+    __asm__ volatile("mrs %0, cntkctl_el1" : "=r"(value));
+    return value;
+}
+
+static inline void write_cntkctl_el1(uint64_t value) {
+    __asm__ volatile("msr cntkctl_el1, %0; isb" :: "r"(value) : "memory");
+}
+
 // --- H1: GICv3 system-register CPU interface (ICC_*_EL1) --------------------
 // The GICv3 CPU interface is a set of system registers, not an MMIO window
 // (that is the GICv2 model). Embedded Swift cannot emit `msr`/`mrs` directly,
