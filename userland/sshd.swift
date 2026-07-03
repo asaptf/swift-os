@@ -1059,7 +1059,8 @@ private func readEncryptedChachaPacket(_ fd: Int32,
     withUnsafeTemporaryAllocation(byteCount: maxPacketLen + 20, alignment: 8) { enc -> Int in
         withUnsafeTemporaryAllocation(byteCount: maxPacketLen, alignment: 8) { plain -> Int in
             guard let encBase = enc.baseAddress, let plainBase = plain.baseAddress else { return -1 }
-            if !readExact(fd, encBase, 4) { return -1 }
+            // TCG + bridge NIC: allow longer waits for encrypted userauth packets.
+            if !readExact(fd, encBase, 4, 15000) { return -1 }
 
             var nonce = (UInt64(0), UInt32(0))
             withUnsafeMutableBytes(of: &nonce) { nb in
@@ -1071,7 +1072,7 @@ private func readEncryptedChachaPacket(_ fd: Int32,
             if packetLen < 5 || packetLen > maxPacketLen || (packetLen % sshBlockSize) != 0 {
                 return -1
             }
-            if !readExact(fd, encBase + 4, packetLen + 16) { return -1 }
+            if !readExact(fd, encBase + 4, packetLen + 16, 15000) { return -1 }
 
             var tagOK = false
             withUnsafeMutableBytes(of: &nonce) { nb in
@@ -2368,10 +2369,15 @@ private func handleSSHSession(_ fd: Int32,
 
     var authed = false
     var attempts = 0
-    while !authed && attempts < 8 {
+    // Under TCG the NIC behind a PCIe bridge can deliver encrypted userauth
+    // packets late; retry the read instead of failing the whole session.
+    while !authed && attempts < 32 {
         attempts += 1
         n = readEncryptedChachaPacket(fd, packet, cap, clientKey, &clientSeq)
-        guard n > 0 else { swiftos_puts("sshd: encrypted auth read failed\n"); return false }
+        if n <= 0 {
+            swiftos_puts("sshd: encrypted auth read retry\n")
+            continue
+        }
         r = SSHReader(p: packet, len: n)
         guard r.u8() == msgUserauthRequest,
               let user = r.string(),

@@ -21,6 +21,7 @@ hetzner_deploy_load_env() {
 
   DEPLOY_DIR="${HETZNER_DEPLOY_DIR:-$DEPLOY_DIR}"
   DISK_IMG="${HETZNER_DISK_IMAGE:-$root/build/swift-os.img}"
+  HETZNER_UPDATE_STORE_IMG="${HETZNER_UPDATE_STORE_IMAGE:-$root/build/hetzner-update-store.img}"
   KERNEL_ELF="$root/build/kernel.elf"
   BASE_IMG="$root/build/base.img"
   DTB="$root/build/virt.dtb"

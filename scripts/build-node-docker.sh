@@ -20,8 +20,16 @@ IMAGE="swiftos-nodebuild"
 VERSION="${NODE_VERSION:-24.16.0}"
 JOBS="${JOBS:-8}"
 
-command -v docker >/dev/null 2>&1 || { echo "FAIL: docker not installed" >&2; exit 2; }
-docker info >/dev/null 2>&1 || { echo "FAIL: docker daemon not running" >&2; exit 2; }
+if ! command -v docker >/dev/null 2>&1; then
+    echo "SKIP: docker CLI not installed — Node.js cross-build requires a Linux container (NPM35b)." >&2
+    echo "  Install Docker Desktop, then: make node-docker-smoke-test && ./scripts/build-node-docker.sh" >&2
+    exit 2
+fi
+if ! docker info >/dev/null 2>&1; then
+    echo "SKIP: docker daemon not running — start Docker Desktop, then rerun this script." >&2
+    echo "  Quick check: make node-docker-smoke-test" >&2
+    exit 2
+fi
 
 if [[ "${REBUILD_IMAGE:-0}" == "1" ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     echo "==> Building toolchain image $IMAGE (one-time, ~30-60 min)…"
@@ -45,7 +53,12 @@ SRC="$WORK/node-v${VERSION}"
 mkdir -p "$WORK"
 
 # Use the already-fetched, checksum-verified distfile from the host tree.
-[ -f "$DIST/node-v${VERSION}.tar.gz" ] || { echo "missing $DIST/node-v${VERSION}.tar.gz (run make node-configure-probe on host once)"; exit 2; }
+if [ ! -f "$DIST/node-v${VERSION}.tar.gz" ]; then
+  echo "FAIL: missing $DIST/node-v${VERSION}.tar.gz" >&2
+  echo "  Run on the host first: make node-configure-probe   # fetches + verifies the distfile" >&2
+  echo "  Or: make node-docker-smoke-test                    # checks pipeline wiring" >&2
+  exit 2
+fi
 [ -d "$SRC" ] || tar xzf "$DIST/node-v${VERSION}.tar.gz" -C "$WORK"
 
 # The cross toolchain is built --disable-threads, so it rejects gyp's linux
@@ -132,7 +145,7 @@ TF="-isystem /src/userland/node-compat -isystem /src/userland/compat -D__linux__
 VJOBS="${NODE_JOBS:-2}"
 # One-shot clean of target objects/libs (e.g. after a toolchain ABI change),
 # keeping obj.host (native, valid). Set NODE_CLEAN_TARGET=1.
-if [ -n "'"${NODE_CLEAN_TARGET:-}"'" ]; then
+if [ -n "${NODE_CLEAN_TARGET:-}" ]; then
   echo "--- cleaning out/Release/obj.target (toolchain change) ---"
   rm -rf out/Release/obj.target
 fi

@@ -7094,6 +7094,40 @@ include strategy, libuv port, base/platform) carries over unchanged.
 **Acceptance.** `make node-configure-probe` (groundwork still green); full Node
 build deferred pending the build-environment decision.
 
+### NPM35b-pivot — Docker Linux build environment + smoke gate (IN PROGRESS, 2026-07-03)
+
+Executed the recommended Docker pivot (`docker/Dockerfile.nodebuild` +
+`scripts/build-node-docker.sh`). macOS host walls are bypassed: host=linux builds
+Torque/js2c/bytecode generators natively; target objects use the image's
+thread-enabled `aarch64-elf-g++` + `userland/node-compat` masquerade flags.
+
+**Pipeline wiring (done this session):**
+- `make node-docker-smoke-test` — lightweight gate: docker daemon, image or
+  Dockerfile, distfile checksum, `bash -n` on build/link drivers, optional
+  partial-compile checkpoint under `build/node-docker-work/…/obj.target`.
+- `scripts/build-node-docker.sh` — clearer SKIP when docker is absent; fixed
+  `NODE_CLEAN_TARGET` guard (was always wiping `obj.target`); distfile hint points
+  at `make node-configure-probe`.
+- `make newlib` + `make node-configure-probe` — green on host (NPM30 libuv link;
+  NPM33 still pending on host — no local `sysroot/bin/aarch64-elf-g++`; Docker
+  image carries thread-enabled libstdc++).
+
+**First Docker compile pass (in flight):**
+- Configure completes inside `swiftos-nodebuild` (`--dest-os=linux`, snapshotless).
+- Target compile progressing: Abseil, OpenSSL, libuv, `libv8_libbase.a`, Torque
+  host+target, `v8_compiler` host TUs — **no target CXX compile errors** so far.
+- Expected deferred failures only: `crt0.o` / `-ldl` on gyp executable links
+  (`nop`, `openssl-cli`, …) — handled by `make -k` + freestanding final link via
+  `scripts/link-node.sh` once all static libs exist.
+- Incidental host-only noise: vendored googletest (`clone`, `cwd`) — not on the
+  Node runtime path.
+
+**Not yet.** `build/node.elf` / `make node-test` — need compile completion +
+`scripts/link-node.sh` + `cp …/node.elf build/node.elf`. Multi-hour V8
+`v8_base`/`libnode.a` compile still running.
+
+**Acceptance.** `make node-docker-smoke-test`, `make node-configure-probe`.
+
 ## H-series — bare-metal Hetzner ARM bring-up, 2026-06-16
 
 **Why.** The real deployment target is the user's Hetzner ARM cloud VM
@@ -7314,9 +7348,10 @@ login prompt with no kernel block driver. Wired into `make test`.
 runs the userland (`S5f OK`). `gicv3-test` / `virtio-pci-test` still pass (they
 exercise the new entry ABI).
 
-**Open for H4/H6.** `/data` (datafs) on the real server still needs a PCI block
-path (virtio-blk-pci or virtio-scsi) — out of scope for the read-only root. H4
-brings virtio-net over PCI + SSH.
+**Open for H4/H6 (resolved by H7 for PCI /data).** `/data` (datafs) on the real
+server still needed a PCI block path (virtio-blk-pci) — out of scope for the
+read-only root at H3 time. H4 brings virtio-net over PCI + SSH; **H7** (below)
+closes the `/data` PCI persistence gate on the Hetzner QEMU device model.
 
 ### H4 — virtio-net over PCI + SSH reachable (DONE, 2026-06-16)
 
@@ -7410,6 +7445,30 @@ its platform map from ACPI with no device tree. Remaining: **H6** (bring-up on
 the real `swiftos.tech` server: build the GPT image, `dd` it onto the boot disk
 via the provider rescue system, confirm with the user before the destructive
 step, iterate over serial/VNC until SSH reaches SwiftOS).
+
+### H7 — /data (datafs) on virtio-blk-pci under the Hetzner device model (DONE, 2026-07-03)
+
+**Goal.** V4b proved a SWDATAFS volume over virtio-blk-pci on plain QEMU `virt`
+(mmio base + PCI media disk). The real Hetzner Cloud server boots from
+virtio-scsi-pci with no virtio-mmio block devices; `/data` and Hetzner Volumes are
+virtio-blk-pci. Prove `/data` enumerates, mounts, and persists across reboot on
+the Hetzner-faithful QEMU topology (ACPI, GICv3, virtio-scsi boot, devices behind
+PCIe root ports, `-smp 2`).
+
+**Acceptance.** `make hetzner-data-pci-test` (`tests/hetzner_data_pci_test.sh`)
+boots the GPT disk under UEFI on the Hetzner profile (virtio-scsi boot,
+virtio-gpu scanout console, GICv3, `-smp 2`, NIC/RNG behind PCIe root ports) with
+an unlabeled SWDATAFS disk on `virtio-blk-pci` as the `/data` root, asserts `M9 OK:
+hardware discovered from ACPI`, `V4: virtio-blk-pci disks enumerated`, `D1 OK:
+datafs mounted at /data`, and the kernel **D0 boot counter** increments `1→2` across
+reboot (same block-device persistence gate as `data-persist-test`, now on the PCI
+transport + Hetzner topology). Serial is output-only (headless); virtio-gpu skips
+the blocking serial `ttydemo` so `swos-init`/sshd autostart. A bounded SSH
+`/data/ssh-mark.txt` round-trip is attempted best-effort when TCG timing allows (same
+caveat as `hetzner-deploy-test`). Wired into `make test` (~1 min under TCG).
+
+**Regression.** `v4-pci-test` (plain virt PCI media volume) and `h5-acpi-test`
+(Hetzner boot without a data disk) stay green.
 
 ## V-series — mountable multi-volume storage (post-M13)
 
@@ -9157,3 +9216,16 @@ format. LM6 adds both to the engine (`llama2.swift`), leaving the greedy path by
 models + a >1 GiB-RAM kernel (LM3/LM4-MM), a real Q8 model (LM4), the GGUF/Q4_K ecosystem
 (LM5), and sampling + chat (LM6). Remaining recorded direction: LM2 (multi-core matmul, blocked
 on the S-series scheduler ungate) — the biggest remaining speedup, especially for GGUF.
+
+## OS-1b-Hetzner: deploy update store + QEMU gate (2026-07-03)
+
+- `make hetzner-deploy-build` now also builds `build/hetzner-update-store.img` via
+  `make hetzner-update-store` (SWOSBOOT A/B, both slots = prod `base.img`, active slot A) and
+  records it in `build/hetzner-deploy/manifest.txt` + `artifacts-sha256.txt`. Attach on the live
+  box as a virtio-blk-pci volume (same transport as a Hetzner Cloud Volume).
+- Opt-in gate `make hetzner-os-update-test`: Hetzner-faithful QEMU (virtio-gpu + NIC/RNG behind
+  PCIe root ports, GPT on virtio-blk-pci + SWOSBOOT store on a second virtio-blk-pci disk,
+  `sshd-supervised` only) runs headless `swupdate os-apply-local` over SSH on the baked SWSYS
+  fixture and asserts coordinated ESP activate (base staged into slot B + kernel-state flipped).
+  GPT boots on blk-pci in QEMU so loader/kernel can drive ESP kernel-state I/O (production boots
+  scsi; real HW Console check still pending).

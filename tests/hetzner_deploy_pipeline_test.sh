@@ -27,12 +27,15 @@ require_file "$DEPLOY_DIR/manifest.txt"
 require_file "$DEPLOY_DIR/artifacts-sha256.txt"
 require_file "$DEPLOY_DIR/release-manifest.json"
 require_file "$ROOT/build/swift-os.img"
+require_file "$ROOT/build/hetzner-update-store.img"
 require_file "$DEPLOY_DIR/known_hosts"
 require_file "$EVIDENCE/manifest.txt"
 require_file "$EVIDENCE/secrets-omitted.txt"
 
 require_contains "$DEPLOY_DIR/manifest.txt" "hcloud-prod-supervised"
+require_contains "$DEPLOY_DIR/manifest.txt" "hetzner-update-store.img"
 require_contains "$DEPLOY_DIR/artifacts-sha256.txt" "swift-os.img"
+require_contains "$DEPLOY_DIR/artifacts-sha256.txt" "hetzner-update-store.img"
 require_contains "$EVIDENCE/secrets-omitted.txt" "ssh_host_ed25519_seed"
 
 [[ ! -f "$EVIDENCE/ssh_host_ed25519_seed" ]] \

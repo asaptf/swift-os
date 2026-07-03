@@ -39,6 +39,10 @@ make -C "$ROOT" disk \
 
 hetzner_deploy_require_file "$DISK_IMG" "disk image missing after make disk"
 
+echo "==> building SWOSBOOT update store (both slots = prod base, active A)"
+make -C "$ROOT" hetzner-update-store BASE_PROFILE=prod
+hetzner_deploy_require_file "$HETZNER_UPDATE_STORE_IMG" "update store missing after make hetzner-update-store"
+
 echo "==> release manifest"
 make -C "$ROOT" release-manifest BASE_PROFILE=prod \
   SSHD_HOST_SEED_FILE="$HETZNER_HOST_SEED" \
@@ -59,6 +63,7 @@ else
 fi
 
 disk_sha="$(hetzner_deploy_sha256_file "$DISK_IMG")"
+store_sha="$(hetzner_deploy_sha256_file "$HETZNER_UPDATE_STORE_IMG")"
 kernel_sha="$(hetzner_deploy_sha256_file "$KERNEL_ELF")"
 base_sha="$(hetzner_deploy_sha256_file "$BASE_IMG")"
 dtb_sha="$(hetzner_deploy_sha256_file "$DTB")"
@@ -74,12 +79,14 @@ services: fixtures/swos/services-prod (nginx, sshd, inputd, llmd)
 identity: locked prod passwd + staged authorized_keys
 host key: stable seed at $HETZNER_HOST_SEED (public known_hosts in deploy dir)
 disk image: $DISK_IMG
+update store: $HETZNER_UPDATE_STORE_IMG (SWOSBOOT A/B, both slots = prod base.img, active A — attach as virtio-blk-pci)
 remote flash target: $HETZNER_DISK on $HETZNER_HOST
 pipeline: build -> local preflight -> upload -> health -> promote
 EOF
 
 {
   printf '%s  %s\n' "$disk_sha" "$(basename "$DISK_IMG")"
+  printf '%s  %s\n' "$store_sha" "$(basename "$HETZNER_UPDATE_STORE_IMG")"
   printf '%s  %s\n' "$kernel_sha" "kernel.elf"
   printf '%s  %s\n' "$base_sha" "base.img"
   printf '%s  %s\n' "$dtb_sha" "virt.dtb"
@@ -87,6 +94,7 @@ EOF
 
 {
   wc -c <"$DISK_IMG" | awk '{print $1 " swift-os.img"}'
+  wc -c <"$HETZNER_UPDATE_STORE_IMG" | awk '{print $1 " hetzner-update-store.img"}'
   wc -c <"$KERNEL_ELF" | awk '{print $1 " kernel.elf"}'
   wc -c <"$BASE_IMG" | awk '{print $1 " base.img"}'
   wc -c <"$DTB" | awk '{print $1 " virt.dtb"}'
@@ -110,5 +118,6 @@ cp "$DEPLOY_DIR/secrets-omitted.txt" "$HETZNER_EVIDENCE_DIR/secrets-omitted.txt"
 
 echo "hetzner-deploy-build: OK"
 echo "  disk:      $DISK_IMG ($disk_sha)"
+echo "  store:     $HETZNER_UPDATE_STORE_IMG ($store_sha)"
 echo "  deploy:    $DEPLOY_DIR"
 echo "  evidence:  $HETZNER_EVIDENCE_DIR"

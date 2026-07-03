@@ -182,8 +182,14 @@ Key constraints discovered:
   Test `os_coordinate_activate_test.sh` (AAVMF + ESP + store, no network): boot ->
   shell -> `swupdate os-apply-local <tiny SWSYS>` -> base staged into slot B + ESP
   selector flipped to B. PASS; OS-1a / store-boot / UEFI-plain-base all still PASS.
-  NOT yet done: making `make disk` carry a store base by default (the real-HW image
-  layout — deferred to the real-HW batch with the Console check).
+  **OS-1b-Hetzner (done):** `make hetzner-deploy-build` now also emits
+  `build/hetzner-update-store.img` (SWOSBOOT, both slots = prod `base.img`,
+  active A) and records it in the deploy manifest. Opt-in gate
+  `make hetzner-os-update-test` boots the Hetzner-faithful QEMU profile (virtio-
+  gpu + NIC/RNG behind PCIe root ports; GPT on virtio-blk-pci + virtio-blk-pci
+  store; `sshd-supervised` only) and proves headless `swupdate os-apply-local`
+  over SSH stages the base + flips the ESP selector. (Production boots scsi; QEMU
+  uses blk-pci for ESP kernel-state I/O.) Real-HW Console check still pending.
 - **OS-1c:** new-kernel write into a padded ESP slot (the kernel half of a SWSYS
   bundle), so a single update moves both kernel and base.
 - **Real-HW gate:** verify the whole flow on the Hetzner box via Console (QEMU

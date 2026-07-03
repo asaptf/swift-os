@@ -196,6 +196,30 @@ static void seed_site(void) {
     (void)waitpid(pid, &status, 0);
 }
 
+// INCLUDE_OS_STAGE_TEST: when the baked marker is present, apply the tiny SWSYS
+// fixture once at boot (headless — no host serial input). Gates like
+// hetzner_os_update_test.sh assert the coordinated ESP activate markers on UART.
+static void apply_os_stage_test_fixture(void) {
+    if (open("/usr/share/swupdate-test/run-os-apply-local-at-boot", O_RDONLY) < 0) {
+        return;
+    }
+    int pid = fork();
+    if (pid < 0) {
+        puts_raw("swos-init: fork failed for os stage test apply\n");
+        return;
+    }
+    if (pid == 0) {
+        char *argv[] = {
+            "swupdate", "os-apply-local", "/usr/share/swupdate-test/os.swsys", 0
+        };
+        execve("/bin/swupdate", argv, 0);
+        puts_raw("swos-init: exec swupdate os-apply-local failed\n");
+        _exit(127);
+    }
+    int status = 0;
+    (void)waitpid(pid, &status, 0);
+}
+
 static void add_supervised_service(enum service_kind kind) {
     if (supervised_count >= MAX_SUPERVISED_SERVICES) {
         puts_raw("swos-init: too many supervised services\n");
@@ -347,6 +371,7 @@ static int supervise_services_forever(void) {
 int main(void) {
     puts_raw("swos-init: starting configured services\n");
     seed_site();
+    apply_os_stage_test_fixture();
     start_configured_services();
     if (supervision_requested) {
         return supervise_services_forever();
