@@ -31,6 +31,7 @@ PACKAGES=(
     python3
     qemu-system-aarch64
     qemu-system-arm
+    ipxe-qemu                # /usr/share/qemu/efi-virtio.rom for virt DTB dump + NIC boot
     tar
     xz-utils
 )
