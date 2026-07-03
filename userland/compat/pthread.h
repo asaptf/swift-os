@@ -18,6 +18,13 @@
 
 #include_next <pthread.h>
 
+/* Linux/OpenSSL/libuv compile once-controls as a single word (PTHREAD_ONCE_INIT=0).
+ * newlib's 8-byte {is_initialized, init_executed} made pthread_once touch the neighbour
+ * word on 4-byte CRYPTO_ONCE objects and double-ran OpenSSL init (SIGSEGV in
+ * OPENSSL_LH_insert during npm config/install). Runtime uses only the first word. */
+#undef PTHREAD_ONCE_INIT
+#define PTHREAD_ONCE_INIT {0}
+
 #ifndef PTHREAD_STACK_MIN
 #define PTHREAD_STACK_MIN 16384
 #endif

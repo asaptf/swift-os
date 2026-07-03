@@ -8,6 +8,15 @@ private(set) var systemTicks: UInt64 = 0
 // Scheduler tick rate (Hz); published so /bin/top can convert ticks ↔ seconds.
 private(set) var timerHz: UInt32 = 0
 
+private let cntkctlEl0Vcten: UInt64 = 1 << 0 // CNTVCT_EL0 readable at EL0 (libuv/V8).
+private let cntkctlEl0Pcten: UInt64 = 1 << 1 // CNTPCT_EL0 readable at EL0.
+
+private func timerEnableEl0CounterAccess() {
+    var ctl = read_cntkctl_el1()
+    ctl |= cntkctlEl0Vcten | cntkctlEl0Pcten
+    write_cntkctl_el1(ctl)
+}
+
 func timerInit(ticksPerSecond: UInt64) {
     let frequency = read_cntfrq_el0()
     timerHz = UInt32(truncatingIfNeeded: ticksPerSecond)
@@ -16,6 +25,7 @@ func timerInit(ticksPerSecond: UInt64) {
         timerIntervalTicks = 1
     }
 
+    timerEnableEl0CounterAccess()
     timerInitCurrentCpu()
 }
 
@@ -25,6 +35,7 @@ func timerInitCurrentCpu() {
         timerIntervalTicks = frequency / 100
         if timerIntervalTicks == 0 { timerIntervalTicks = 1 }
     }
+    timerEnableEl0CounterAccess()
     gicEnableInterrupt(physicalTimerIrq)
     timerScheduleNext()
 }

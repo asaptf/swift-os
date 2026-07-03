@@ -135,13 +135,20 @@ func futexS5eWaitTableIdleSelfTest() -> Bool {
     return true
 }
 
+private let futexPrivateFlag: Int = 128 // FUTEX_PRIVATE_FLAG (Linux); ignored here.
+
 /// futex(uaddr, op, val). Returns 0 (WAIT woke / value mismatch) or the number
 /// of threads woken (WAKE); negative on error.
 func futexOp(uaddrVA: UInt, op: Int, val: UInt) -> Int {
-    if op == futexWait {
+    var base = op & ~futexPrivateFlag
+    // Abseil/V8 may pass FUTEX_WAIT_BITSET (+ optional FUTEX_CLOCK_REALTIME).
+    // The kernel waiter is minimal: treat any wait-family op as FUTEX_WAIT.
+    if base == 9 || base == (9 | 256) { base = futexWait }
+    if base == 10 { base = futexWake } // FUTEX_WAKE_BITSET
+    if base == futexWait {
         return futexWaitOn(uaddrVA, expected: UInt32(truncatingIfNeeded: val))
     }
-    if op == futexWake {
+    if base == futexWake {
         return futexWakeOn(uaddrVA, count: Int(bitPattern: val))
     }
     return Errno.invalid.code // EINVAL

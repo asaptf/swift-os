@@ -24,7 +24,7 @@ B=/tmp/nodelink
 mkdir -p "$B"
 
 # Feature macros the node-compat masquerade headers need (mirror the build flags).
-CF="-ffreestanding -Os -Wall -D_GNU_SOURCE -D__linux__ -D_REENTRANT \
+CF="-ffreestanding -Os -Wall -D_GNU_SOURCE -D__linux__ -D_REENTRANT -D__DYNAMIC_REENT__ \
  -D_POSIX_THREADS -D_POSIX_READER_WRITER_LOCKS=1 -D_POSIX_SEMAPHORES=1 \
  -D_POSIX_BARRIERS=1 -D_UNIX98_THREAD_MUTEX_ATTRIBUTES=1 -D_POSIX_TIMERS \
  -D_POSIX_MONOTONIC_CLOCK -D_POSIX_CLOCK_SELECTION \

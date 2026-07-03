@@ -247,3 +247,15 @@ int getentropy(void *buf, size_t len) {
     }
     return 0;
 }
+
+#include <sys/reent.h>
+
+extern struct _reent *_impure_ptr;
+
+/* Fallback for newlib programs linked without compat/stubs.c (e.g. newlibtest).
+ * pthread-capable binaries override these with strong symbols in stubs.c. */
+__attribute__((weak)) void __swos_bind_main_reent(void) { }
+
+__attribute__((weak)) struct _reent *__getreent(void) {
+    return _impure_ptr;
+}
