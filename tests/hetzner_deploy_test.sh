@@ -15,7 +15,7 @@
 #
 # Boot uses -smp 2 and serial OUTPUT-ONLY (file:) — the guest gets no serial
 # input, exactly like a Hetzner Cloud VM. The disk is built by the make target
-# with SWOS_SERVICES_FILE=fixtures/swos/services-supervised.
+# with BASE_PROFILE=prod (fixtures/swos/services-prod).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 QEMU="${QEMU:-qemu-system-aarch64}"

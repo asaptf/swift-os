@@ -49,3 +49,40 @@ jobs:
 
       - name: Full test suite
         run: make test
+
+  ops-test:
+    name: prod + hetzner gates
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache toolchains and heavy build inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.swift/toolchains
+            ~/.local/arm-gnu-toolchain
+            ~/.local/bin
+            sysroot
+            models
+            build/busybox.elf
+            build/nginx-root
+            build/sqlite-root
+            build/openssl-root
+            build/nginx-certs
+          key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/build-nginx.sh', 'scripts/build-sqlite.sh', 'scripts/build-openssl.sh') }}
+          restore-keys: |
+            bootstrap-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Bootstrap sysroot, busybox, models
+        run: ./scripts/ci-bootstrap.sh
+
+      - name: Export CI build environment
+        run: ./scripts/ci-export-env.sh
+
+      - name: Production boot profile smoke
+        run: make prod-boot-test
+
+      - name: Hetzner deploy regression
+        run: make hetzner-deploy-test

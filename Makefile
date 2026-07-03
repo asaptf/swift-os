@@ -11,6 +11,7 @@
 #   make ci-fast   Docs + build + DTB + base image + boot/log-export smoke.
 #   make release-manifest Emit build/release-manifest.json for release artifacts.
 #   make ci-test   ci-fast (CI gate).
+#   make base-image-prod / prod-boot-test  Production hosting profile (P1.4).
 #   make smp-test Build, then run the pre-S0 SMP boot smoke.
 #   make clean   Remove build artifacts.
 #
@@ -122,6 +123,19 @@ SSHD_KEX_SEED_FILE ?=
 SSHD_AUTHORIZED_KEYS_FILE ?=
 NET_IPV6_CONFIG_FILE ?=
 SWOS_SERVICES_FILE ?=
+# P1/P2: image profile — dev (factory passwords, no boot services) or prod
+# (locked passwords, supervised nginx/sshd/llmd/inputd via fixtures/swos/services-prod).
+BASE_PROFILE ?= dev
+SWOS_PASSWD_FILE ?=
+ifeq ($(BASE_PROFILE),prod)
+ifeq ($(SWOS_SERVICES_FILE),)
+SWOS_SERVICES_FILE := fixtures/swos/services-prod
+endif
+ifeq ($(SWOS_PASSWD_FILE),)
+SWOS_PASSWD_FILE := fixtures/prod/swos/passwd
+endif
+override ROOT_LOGIN_SHELL := /bin/sh
+endif
 BASE_SEED_FILES := $(shell find base -type f | sort)
 
 # ---- Board selection (M10.5) ----------------------------------------------
@@ -2828,9 +2842,20 @@ h5-acpi-test: disk
 # console, and headless boot to swos-init/sshd.
 hetzner-deploy-test: build $(SSHKEY)
 	rm -f $(BASE_IMG) $(DISK_IMG)
-	$(MAKE) disk SWOS_SERVICES_FILE=fixtures/swos/services-supervised
+	$(MAKE) disk BASE_PROFILE=prod
 	./tests/hetzner_deploy_test.sh
-	rm -f $(BASE_IMG) $(DISK_IMG)   # restore: the supervised base.img is deploy-specific, not the default
+	rm -f $(BASE_IMG) $(DISK_IMG)   # restore: the prod base.img is deploy-specific, not the default
+
+# P1.4: production hosting boot profile — supervised services, locked passwords.
+.PHONY: base-image-prod prod-boot-test
+base-image-prod:
+	$(MAKE) base-image BASE_PROFILE=prod
+
+prod-boot-test: build $(QEMU_DTB)
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image BASE_PROFILE=prod
+	chmod +x ./tests/prod_boot_test.sh
+	./tests/prod_boot_test.sh
 
 # D0: persistent /data disk survives reboot. Base-image optional (the D0 marker
 # is emitted before vfsInit), so this focused gate runs without the full image.
@@ -4015,6 +4040,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	rm -rf $(BASE_ROOT)
 	mkdir -p $(BASE_ROOT)
 	cp -R base/. $(BASE_ROOT)/
+	if [ -n "$(SWOS_PASSWD_FILE)" ]; then cp "$(SWOS_PASSWD_FILE)" $(BASE_ROOT)/etc/swos/passwd; fi
 	if [ -n "$(ROOT_LOGIN_SHELL)" ]; then perl -i -pe 's{^(root(?::[^:]*){4}:).*$$}{$${1}$(ROOT_LOGIN_SHELL)}' $(BASE_ROOT)/etc/swos/passwd; fi
 	if [ -n "$(SSHD_HOST_SEED_FILE)" ]; then cp "$(SSHD_HOST_SEED_FILE)" $(BASE_ROOT)/etc/ssh/ssh_host_ed25519_seed; fi
 	if [ -n "$(SSHD_KEX_SEED_FILE)" ]; then cp "$(SSHD_KEX_SEED_FILE)" $(BASE_ROOT)/etc/ssh/ssh_kex_seed; fi

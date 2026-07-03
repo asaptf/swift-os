@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# Production hosting profile (swiftos.tech-shaped): headless supervised services.
+# swos-init stays alive as the restart loop; no console-login handoff.
+nginx-supervised
+sshd-supervised
+inputd
+llmd-supervised

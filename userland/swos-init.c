@@ -13,7 +13,7 @@
 
 int puts_raw(const char *s);
 
-#define MAX_SUPERVISED_SERVICES 4
+#define MAX_SUPERVISED_SERVICES 6
 // Cap restarts for daemons that fail *at startup* with no external gating (nginx:
 // a TLS/entropy failure fork-storms the kernel into a panic in a tight loop).
 // After the cap we give up on that one service; others keep running.
@@ -35,6 +35,7 @@ enum service_kind {
     SERVICE_NGINX = 5,
     SERVICE_CROND = 6,
     SERVICE_INPUTD = 7,   // C5j: persistent userland virtio-input driver
+    SERVICE_LLMD = 8,
 };
 
 struct supervised_service {
@@ -86,6 +87,9 @@ static const char *service_name(enum service_kind kind) {
     }
     if (kind == SERVICE_INPUTD) {
         return "inputd";
+    }
+    if (kind == SERVICE_LLMD) {
+        return "llmd";
     }
     if (kind == SERVICE_SSHD_ONCE) {
         return "sshd-once";
@@ -144,6 +148,12 @@ static int start_service(enum service_kind kind) {
             char *argvi[] = { "inputd", 0 };
             execve("/bin/inputd", argvi, 0);
             puts_raw("swos-init: exec /bin/inputd failed\n");
+            _exit(127);
+        }
+        if (kind == SERVICE_LLMD) {
+            char *argvl[] = { "llmd", 0 };
+            execve("/bin/llmd", argvl, 0);
+            puts_raw("swos-init: exec /bin/llmd failed\n");
             _exit(127);
         }
         char *argv4[] = { "sshd", 0 };
@@ -225,6 +235,10 @@ static void run_service_token(char *tok) {
         add_supervised_service(SERVICE_CROND);
     } else if (streq(tok, "inputd") || streq(tok, "/bin/inputd")) {
         (void)start_service(SERVICE_INPUTD);
+    } else if (streq(tok, "llmd") || streq(tok, "/bin/llmd")) {
+        (void)start_service(SERVICE_LLMD);
+    } else if (streq(tok, "llmd-supervised")) {
+        add_supervised_service(SERVICE_LLMD);
     } else {
         puts_raw("swos-init: unsupported service ");
         puts_raw(tok);
@@ -278,7 +292,7 @@ static void start_configured_services(void) {
 }
 
 // Only startup-failing daemons (nginx) are restart-capped; connection-gated
-// services (sshd) restart without bound. See MAX_RESTARTS_PER_SERVICE above.
+// services (sshd, llmd) restart without bound. See MAX_RESTARTS_PER_SERVICE above.
 static int service_restart_is_capped(enum service_kind kind) {
     return kind == SERVICE_NGINX;
 }
