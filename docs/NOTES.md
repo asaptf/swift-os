@@ -9229,3 +9229,28 @@ on the S-series scheduler ungate) — the biggest remaining speedup, especially 
   fixture and asserts coordinated ESP activate (base staged into slot B + kernel-state flipped).
   GPT boots on blk-pci in QEMU so loader/kernel can drive ESP kernel-state I/O (production boots
   scsi; real HW Console check still pending).
+
+## OS-1c: new-kernel write into padded ESP slots (DONE)
+
+Closes the last OS-1 gap: install a *genuinely new* host-signed kernel into the
+inactive ESP slot (not merely duplicate the running one), so one SWSYS bundle can
+move kernel + base together under the coordinated selector from OS-1a/1b.
+
+- **OS-1c-1** (`d858a3f`): `SWOSKERN` manifest v4 — per-slot Ed25519 over
+  `"SWOSKSLT" || index || size || sha256`. Loader + `tools/kernelboot.swift`.
+- **OS-1c-2a** (`fa78370`): fixed padded slots (`KERNEL_SLOT_BYTES` = 4 MiB);
+  in-place write, no FAT growth.
+- **OS-1c-2b** (`218f1a6`): `kernel_install_{begin,write,commit,abort}` (syscalls
+  112–115), `/bin/swos-kinstall`. Commit: full-slot write + size + on-disk re-hash
+  + per-slot sig vs `image_trust_root`; flush before manifest entry. Wrong-index
+  and bad-sig entries rejected. Gate: `make uefi-kinstall-test` (AAVMF; boots
+  the newly installed slot B after activate).
+- **OS-1c-3a** (`b5641f6`): SWSYS format v2 — padded kernel + embedded v4
+  manifest (both slot entries cover the same image). `tools/syspack.swift` +
+  `userland/lib/sysbundle.swift`.
+- **OS-1c-3b** (`de9c2c5`): `swupdate os` / `os-apply-local` stages base *and*
+  kernel halves, then flips the single ESP selector. No-ESP boxes skip the
+  kernel half (`ENODEV`). Gate: `make uefi-os-install-test`.
+
+**OS-1c complete.** Next OS work: OS-5 (health / unified confirm), OS-6
+(aggregate test + real-HW Console gate). See `docs/OS_UPDATE_AUDIT.md`.

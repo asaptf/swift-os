@@ -11,17 +11,17 @@ vs **stub/missing**, before any new code is written.
 
 The A/B *mechanism* is far more complete than the prompt assumes — both the kernel
 (ESP) and the base image (data-disk update store) already have signed slots,
-attempt-based rollback, confirm, and full QEMU test coverage. What is **missing** is
-the **delivery + coordination + anti-rollback** layer the prompt actually asks for:
+attempt-based rollback, confirm, and full QEMU test coverage. Much of the
+**delivery + coordination + anti-rollback** layer has also landed since this audit
+opened (OS-1a…OS-1c, OS-2…OS-5 staging paths — see the per-step sections below).
 
-- a **signed system-update bundle** (kernel+base, monotonic version),
-- a **download/stage path** that works on a live box (today base staging needs a
-  physically-attached payload *disk*; kernel staging can only *duplicate the
-  running kernel*, never install a new one),
-- **one coordinated boot-selector** (kernel and base are selected independently
-  today and can drift),
-- **monotonic anti-rollback** (never enforced),
-- `/bin/swupdate os <url>` + unified `confirm`, and `make os-update-test`.
+**Still open / product-facing gaps:**
+
+- unified health/`confirm` auto-path and a single `make os-update-test` that
+  exercises a full trial-boot + rollback story end-to-end (OS-5/OS-6);
+- **real-hardware Console validation** on Hetzner (QEMU cannot catch the
+  boot/driver bugs that only appear on Ampere/KVM — the netPump lesson);
+- optional polish (delta bundles, streaming verify for very large bases).
 
 ## What is REAL (implemented, tested, in `make test`)
 
@@ -66,41 +66,37 @@ the **delivery + coordination + anti-rollback** layer the prompt actually asks f
   (current→prev, next→current) with crash recovery on next boot. This is exactly
   the delivery/stage/atomic-swap shape we need for the OS bundle — reuse it.
 
-## GAPS vs the prompt (this is the work to do)
+## GAPS vs the prompt (original list; status as of OS-1c)
 
-1. **No coordinated boot-selector.** Kernel slot (ESP `kernel-state`) and base slot
-   (data-disk `SWOSBOOT`) are chosen **independently**; `swos-kactivate` and
-   `swos-activate` are separate commands. Nothing guarantees kernel-A boots with
-   base-A. Prompt requires **one atomic flip** selecting kernel+base together.
+1. ~~**No coordinated boot-selector.**~~ **RESOLVED (OS-1a/1b).** ESP
+   `kernel-state.lastBooted` is the single A/B authority; base follows it.
+   `swupdate os` flips the ESP selector when present.
 
-2. **No live delivery of a new OS.**
-   - Base staging reads from a **physically-attached read-only payload disk**
-     (`virtioBlkSelectPayload`) — not possible on a live Hetzner box.
-   - Kernel staging (`swos-kstage`) only **duplicates the currently-running kernel**
-     into the inactive slot — there is **no path to install a *new* kernel binary**.
-   - `kernelA.bin`/`kernelB.bin` are both built from the *same* `$(KERNEL_BIN)` and
-     the FAT32 writer does **same-size in-place copy only** (`ka.1 != kb.1` → EINVAL).
-     A genuinely new kernel of a different size cannot be written in place →
-     needs fixed/padded slot sizing or a FAT cluster (re)allocator. **Decision needed.**
-   - `/bin/swupdate` has `seed`/`apply-local`/`site` only — **no `os` subcommand**.
-   - No combined kernel+base **system-bundle** format (full or delta).
+2. ~~**No live delivery of a new OS.**~~ **Mostly RESOLVED (OS-1c + OS-2…OS-4).**
+   - SWSYS v2 signed bundle carries padded kernel + base (`tools/syspack`).
+   - `swupdate os` / `os-apply-local` stream both halves from a file (or HTTPS URL)
+     into inactive slots via kernel syscalls — no attached payload disk required
+     for the live path.
+   - OS-1c: padded ESP slots + `kernel_install_*` install a *new* host-signed
+     kernel (not just `swos-kstage` duplicate). `swos-kstage` remains for the
+     same-kernel-copy path.
+   - Remaining: real-HW Console proof; optional delta bundles.
 
-3. **No monotonic anti-rollback.** `generation`/`sequence` exist but are *not* a
-   security version; an older, validly-signed (and possibly vulnerable) image is
-   accepted. Prompt requires a monotonic version refused if ≤ the installed one.
+3. ~~**No monotonic anti-rollback.**~~ **RESOLVED (OS-4 stage path).** Kernel
+   enforces `systemVersion` > floor at base stage-begin.
 
-4. **No kernel-mediated "write inactive slot from /data bytes" path.** The only
-   privileged slot writes are payload-disk→slot (base) and active→inactive-copy
-   (kernel). Neither takes bytes from a downloaded `/data` staging file.
+4. ~~**No kernel-mediated "write inactive slot from /data bytes" path.**~~
+   **RESOLVED (OS-3 + OS-1c-2b).** Streaming stage for base + kernel install from
+   userland buffers (swupdate holds the verified bundle in memory / `/data`).
 
-5. **No unified `confirm` / auto-confirm.** Confirm is split (`swos-confirm` +
-   `swos-kconfirm`), both manual. No `/bin/swupdate confirm` and no auto-confirm on
-   "services healthy (sshd+nginx up)".
+5. **No unified `confirm` / auto-confirm.** Confirm is still split
+   (`swos-confirm` + `swos-kconfirm`), both manual. No `/bin/swupdate confirm` and
+   no auto-confirm on "services healthy (sshd+nginx up)". → **OS-5**.
 
-6. **No `make os-update-test`** and — critically — **no real-hardware validation**.
-   Per this session's lesson (timer `netPump` passed QEMU, killed the NIC on real
-   Ampere/KVM), every boot/driver-path change here must be checked on the live box
-   via Console before we rely on it.
+6. **`make os-update-test` exists for pieces**, but the full trial-boot +
+   rollback story and — critically — **real-hardware validation** are still
+   open. Per the netPump lesson, every boot/driver-path change must be checked
+   on the live box via Console. → **OS-6 / Hetzner**.
 
 ## Proposed staged plan (one submilestone at a time, build+boot+test+commit+stop)
 
@@ -190,7 +186,31 @@ Key constraints discovered:
   store; `sshd-supervised` only) and proves headless `swupdate os-apply-local`
   over SSH stages the base + flips the ESP selector. (Production boots scsi; QEMU
   uses blk-pci for ESP kernel-state I/O.) Real-HW Console check still pending.
-- **OS-1c:** new-kernel write into a padded ESP slot (the kernel half of a SWSYS
-  bundle), so a single update moves both kernel and base.
-- **Real-HW gate:** verify the whole flow on the Hetzner box via Console (QEMU
-  can't catch the HW boot/driver bugs — the netPump lesson).
+- **OS-1c (done):** new-kernel write into a padded ESP slot so one SWSYS bundle
+  moves kernel + base. Landed as OS-1c-1 … OS-1c-3b:
+  - **OS-1c-1:** `SWOSKERN` manifest **v4** — independent per-slot Ed25519
+    signatures (`"SWOSKSLT" || u32 index || u64 size || sha256`), bound to the
+    slot index so a slot-A entry cannot be replayed into slot B. Loader +
+    `tools/kernelboot.swift` + host packer agree on the message format.
+  - **OS-1c-2a:** fixed-size **padded** ESP slots (`KERNEL_SLOT_BYTES` = 4 MiB).
+    Both `kernelA.bin` / `kernelB.bin` are the same length; in-place install
+    needs no FAT allocator. Same-size constraint that blocked different-size
+    kernels is gone by construction.
+  - **OS-1c-2b:** streamed install of a *genuinely new* host-signed kernel into
+    the inactive slot — syscalls `kernel_install_{begin,write,commit,abort}`
+    (112–115), `/bin/swos-kinstall`, kernel re-hash + per-slot sig verify before
+    writing the 104-byte manifest entry; flush slot bytes *before* the entry
+    (power-fail safe). Gate: `make uefi-kinstall-test`.
+  - **OS-1c-3a:** SWSYS bundle **format v2** carries the padded kernel + a full
+    v4 `SWOSKERN` manifest (both slot entries cover the same image so install
+    works for whichever slot is inactive). Host: `tools/syspack.swift`.
+  - **OS-1c-3b:** `swupdate os` / `os-apply-local` installs **both** halves:
+    base → inactive SWOSBOOT slot, kernel → inactive ESP slot (entry sliced from
+    the bundle manifest), then one ESP selector flip. Store-only (no ESP):
+    kernel half skipped (`ENODEV`). Gate: `make uefi-os-install-test`.
+  - **OS-1c arc complete.** A single signed SWSYS bundle can move kernel + base
+    together on the coordinated topology. Remaining OS work is outside 1c:
+    health/auto-confirm (OS-5), full `os-update-test` + real-HW Console gate
+    (OS-6 / Hetzner).
+- **Real-HW gate (still open):** verify the whole OS-1 flow on the Hetzner box
+  via Console (QEMU cannot catch the HW boot/driver bugs — the netPump lesson).
