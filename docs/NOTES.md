@@ -8977,22 +8977,35 @@ dropping the pin is follow-up work.
 - Gates: `tests/llm_run_test.sh`, `tests/llm_serve_test.sh`, `tests/simdprobe_test.sh`
   (all wired into `make test`), plus host `build/llm_engine_test` + `llm_q8_engine_test`.
 
-#### Note: LM2 (multi-threaded matmul) is blocked, deferred
+#### Note: LM2 (multi-threaded matmul) — unblocked by S5g
 
-LM2 would fan matmul rows out over sibling threads. It is blocked on two things,
-recorded here so the next attempt starts informed: (1) **secondary EL0 scheduling
-is deliberately gated** — `processHomeCpuForNewReadySlot` places every new
-runnable EL0 slot on CPU0 unless the `s5fRunAnyPlacementActive` test gate is open,
-so in a normal boot a worker pool would just serialize on CPU0. Making run-any
-placement the default is a real scheduler decision (raise for review) and unblocks
-all multi-core userland, not just inference. (2) **The `+neon` codegen is fragile**
-in this Embedded-Swift/QEMU combo: a behaviour-preserving matmul→job+runner refactor
-(host oracles green) reintroduced a QEMU-only int8 divergence of the same class as
-the `quantizeBuf` bug, so the parallel runner must be paired with a `+neon` config
-that doesn't miscompile (likely autovec off + explicit SIMD only). The portable
-design that does work — route each matmul through a `LlamaMatmulJob` value + a
-`llamaMatmulRunner` hook (serial default for host/single-core; pool override in an
-app), no closures across threads, no per-call allocation — is kept for that future.
+LM2 fans matmul rows out over sibling threads. Blocker (1) is **closed by S5g**
+(2026-07-10): default placement is now run-any across online CPUs after boot, so
+a worker pool is no longer serialized on CPU0. Remaining care item: (2) **the
+`+neon` codegen is fragile** in this Embedded-Swift/QEMU combo — a matmul→job+
+runner refactor once reintroduced a QEMU-only int8 divergence of the same class
+as `quantizeBuf`, so the parallel runner must keep explicit SIMD paths and avoid
+autovec on sensitive quantize code. Portable design: `LlamaMatmulJob` value +
+`llamaMatmulRunner` hook (serial default; pool override in the app), no closures
+across threads, no per-call allocation.
+
+### S5g — permanent default multi-CPU EL0 (DONE, 2026-07-10)
+
+After the restricted S2h–S5f demos prove secondary scheduling and close their
+temporary run masks, boot enables multi-CPU EL0 for ordinary userland:
+
+- `processEnableDefaultMultiCpuEl0()` starts every online secondary with a timer
+  heartbeat and sets `processDefaultMultiCpuEl0`.
+- `processHomeCpuForNewReadySlot` uses the S5f run-any round-robin whenever the
+  permanent flag **or** the temporary S5f demo flag is set (explicit `homeCpu`
+  still wins for restricted demos).
+- `processRunS5gDefaultPlacementCheck` creates a coproc batch with
+  `homeCpu: unassigned` **without** setting `s5fRunAnyPlacementActive`, proving
+  the *default* path; secondaries stay online afterward.
+- Interactive/graphical boots that skip demos still call enable before `runInit`.
+- Acceptance: `make s5-ungate-test` (via `tests/smp_boot_test.sh` under `-smp 4`)
+  requires `S5g OK: default multi-CPU EL0 placement enabled` + covered/fallback.
+  Included in `make s5-test`. Unblocks LM2 worker pools.
 
 ### LM3a — a signed packed "model disk" (DONE, 2026-06-27)
 

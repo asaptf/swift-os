@@ -90,6 +90,13 @@ if [[ -z "${EXPECTS_OVERRIDE:-}" ]]; then
   fi
   EXPECTS+=$'\n'"[I] smp: S2h OK: process scheduler quiesced after multi-CPU dispatch"
   EXPECTS+=$'\n'"[I] smp: S2h OK: secondary EL0 gate closed after restricted dispatch"
+  if (( SMP_CPU_COUNT > 1 )); then
+    EXPECTS+=$'\n'"[I] smp: S5g OK: default multi-CPU EL0 placement enabled detail=$SMP_CPU_COUNT"
+    EXPECTS+=$'\n'"[I] smp: S5g OK: default multi-CPU EL0 covered scheduler CPUs"
+  else
+    EXPECTS+=$'\n'"[I] smp: S5g OK: default multi-CPU EL0 placement enabled"
+    EXPECTS+=$'\n'"[I] smp: S5g OK: default multi-CPU EL0 CPU0 fallback"
+  fi
   EXPECTS+=$'\n'"[I] smp: S3a OK: address-space CPU masks matched dispatch CPUs"
   EXPECTS+=$'\n'"[I] smp: S3b OK: IPI delivery stayed scheduler-safe"
   EXPECTS+=$'\n'"[I] smp: S3c OK: TLB shootdown path stayed scheduler-safe"

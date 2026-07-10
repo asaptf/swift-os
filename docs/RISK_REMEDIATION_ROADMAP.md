@@ -294,11 +294,23 @@ Risk note: GICv2 on QEMU virt with >4 or 8 CPUs has known limitations in real si
 - S5 aggregate readiness gate (2026-06-10): `make s5-test` now runs the S5a-S5f
   focused gates in order, giving reviews one aggregate runtime-readiness command
   while preserving the narrow milestone targets.
+- S5g permanent ungate (2026-07-10): after the restricted S2h–S5f demos close
+  their temporary secondary run masks, boot calls
+  `processEnableDefaultMultiCpuEl0()` — starts every online secondary that has a
+  timer heartbeat and makes **run-any** the default placement for new ready
+  processes/threads (no per-demo gate flag). A coproc batch with unassigned
+  home CPUs proves the *default* path covers the scheduler set and leaves
+  secondaries online for ordinary userland (init, threads, LLM workers).
+  Interactive/graphical boots that skip the demos enable the same path before
+  `runInit`. Gate: `make s5-ungate-test` / `make s5-test` (markers
+  `S5g OK: default multi-CPU EL0 placement enabled` + covered/fallback).
 - All existing userland (busybox ash with pipes/redirects/fork/exec, native Swift tools, `/bin/httpd` under concurrent client load, vi, calc/kv REPLs, the network demos) must behave correctly and show utilization across CPUs (add a cheap per-CPU idle tick counter exposed via sysinfo or a new `top` column).
 - Full `make test` (1-CPU and `-smp 4`, both -kernel and UEFI paths) is green, plus new dedicated SMP stress suites (`tests/smp_*`).
 - The system is now "SMP complete" for the current workload class. Higher-level policy (load balancing, CPU hotplug awareness, cgroups-like limits) can come later.
 
-After S5 we have a credible multi-core OS. At that point we immediately follow with C5 (move a driver) so that the architecture vision and the implementation are aligned again.
+After S5g we have a credible multi-core OS for ordinary userland. LM2
+(multi-thread matmul) can use default placement; C5 driver extraction remains a
+separate leverage track.
 
 ### C5a — restartable driver-service supervisor smoke (DONE, 2026-06-10)
 

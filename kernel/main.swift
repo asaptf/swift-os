@@ -308,6 +308,22 @@ private func runS5fRunAnyPlacementDemo() -> Bool {
     return true
 }
 
+/// S5g: permanently ungate multi-CPU EL0 after the restricted S2h–S5f demos.
+/// Starts secondary schedulers for the rest of the boot, makes run-any the
+/// default placement, then exercises that default path with a coproc batch that
+/// does not reopen the temporary S5f gate flag.
+private func runS5gDefaultMultiCpuEl0() -> Bool {
+    uartPuts("swift-os S5g: enable default multi-CPU EL0 placement\n")
+    let n = processEnableDefaultMultiCpuEl0()
+    klog(.info, "smp", "S5g OK: default multi-CPU EL0 placement enabled", UInt64(n))
+    let (img, sz) = demoImage("/bin/coproc")
+    if img == 0 { return false }
+    let (packed, packedLen, argc) = packArgs(["coproc", "S5g"])
+    processRunS5gDefaultPlacementCheck(img, sz, packed, packedLen, argc)
+    uartPuts("S5g OK: default multi-CPU EL0 placement check completed\n")
+    return true
+}
+
 // SMP-race stress: run N copies of /bin/smprace concurrently across CPUs (reusing
 // the reviewed S5f run-any placement primitive) so more than one CPU is inside the
 // S4-locked resource pools (PMM, VFS/tmpfs, pipes) at the same instant. The
@@ -1524,7 +1540,10 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
         // Interactive graphical session (make run-gfx): boot straight into the
         // shell so the window is immediately usable. The milestone demos still
         // run on the serial/test path below (and the acceptance tests depend on
-        // them, e.g. the M7 tty demo).
+        // them, e.g. the M7 tty demo). Still enable permanent multi-CPU EL0 so
+        // userland threads (LLM workers, etc.) can use every online core.
+        let n = processEnableDefaultMultiCpuEl0()
+        klog(.info, "smp", "S5g OK: default multi-CPU EL0 placement enabled", UInt64(n))
         runInit()
     } else {
         runSchedulerDemo()
@@ -1657,6 +1676,20 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
             while true {}
         }
         klog(.info, "smp", "S2h OK: secondary EL0 gate closed after restricted dispatch", UInt64(platform.cpuCount))
+        // S5g: after the restricted gates have closed cleanly, permanently ungate
+        // multi-CPU EL0 for ordinary userland (init and everything after).
+        let ranS5gDefaultMultiCpu = runS5gDefaultMultiCpuEl0()
+        if ranS5gDefaultMultiCpu {
+            if !processS5gDefaultPlacementSelfTest() {
+                uartPuts("panic: S5g default multi-CPU EL0 placement guard failed\n")
+                while true {}
+            }
+            if platform.cpuCount > 1 {
+                klog(.info, "smp", "S5g OK: default multi-CPU EL0 covered scheduler CPUs", UInt64(platform.cpuCount))
+            } else {
+                klog(.info, "smp", "S5g OK: default multi-CPU EL0 CPU0 fallback", UInt64(platform.cpuCount))
+            }
+        }
         if !processAddressSpaceCpuMaskPostRunSelfTest() {
             uartPuts("panic: S3a address-space CPU mask guard failed\n")
             while true {}

@@ -425,6 +425,22 @@ private var s5fRunAnyPlacementActive = false
 private var s5fNextPlacementCpu: UInt32 = 0
 private var s5fRunAnySlots: UnsafeMutablePointer<Int>! = nil
 
+// S5g: permanent default multi-CPU EL0 placement. After the restricted S2h–S5f
+// gates prove secondary scheduling is correct, the boot path enables this once
+// so ordinary userland (init, threads, LLM workers) is placed run-any across
+// online CPUs without reopening a per-demo gate. Single-CPU boots are a no-op
+// (only CPU0 is ever selected).
+private var processDefaultMultiCpuEl0 = false
+private var lastS5gDefaultPlacementTelemetryValid = false
+private var lastS5gDefaultPlacementProcessCount: UInt64 = 0
+private var lastS5gDefaultPlacementSchedulerCpuMask: UInt64 = 0
+private var lastS5gDefaultPlacementDispatchCpuMask: UInt64 = 0
+private var lastS5gDefaultPlacementSecondaryCpuMask: UInt64 = 0
+private var lastS5gDefaultPlacementDispatchCount: UInt64 = 0
+private var lastS5gDefaultPlacementExactCpuMatchCount: UInt64 = 0
+private var lastS5gDefaultPlacementPolicySelectionCount: UInt64 = 0
+private var s5gDefaultPlacementSlots: UnsafeMutablePointer<Int>! = nil
+
 private var currentProcByCpu = [Int](repeating: -1, count: processSchedulerCpuSlots)
 private var lastReapedKilled = false
 
@@ -537,7 +553,11 @@ private func processInstallSlotStorage(capacity newCapacity: Int) -> Bool {
                                                       newCount: newCapacity,
                                                       defaultValue: false),
           let nextS5fRunAnySlots = processGrowTable(s5fRunAnySlots, oldCount: oldCapacity,
-                                                    newCount: newCapacity, defaultValue: -1)
+                                                    newCount: newCapacity, defaultValue: -1),
+          let nextS5gDefaultPlacementSlots = processGrowTable(s5gDefaultPlacementSlots,
+                                                              oldCount: oldCapacity,
+                                                              newCount: newCapacity,
+                                                              defaultValue: -1)
     else {
         return false
     }
@@ -576,6 +596,7 @@ private func processInstallSlotStorage(capacity newCapacity: Int) -> Bool {
     pSchedulerQuiesced = nextSchedulerQuiesced
     pReparentedOrphan = nextReparentedOrphan
     s5fRunAnySlots = nextS5fRunAnySlots
+    s5gDefaultPlacementSlots = nextS5gDefaultPlacementSlots
     processSlotBackingCapacity = newCapacity
     return true
 }
@@ -680,6 +701,8 @@ func processInit() {
     s5eThreadTelemetryLockAcquireCount = 0
     s5eThreadTelemetryLockContentionCount = 0
     resetLastS5fRunAnyTelemetry()
+    processDefaultMultiCpuEl0 = false
+    resetLastS5gDefaultPlacementTelemetry()
 }
 
 private func processAtomicLoad(_ value: inout UInt64) -> UInt64 {
@@ -1032,12 +1055,14 @@ private func processMirrorRunQueueForCpu(_ cpu: UInt32) {
 
 private func processHomeCpuForNewReadySlot(_ slot: Int) -> UInt32 {
     if !processSlotValid(slot) { return unassignedCpu }
-    if s5fRunAnyPlacementActive {
+    // S5f gate (boot demos) and S5g permanent default both use run-any across
+    // CPU0 plus online secondary scheduler CPUs. Explicit homeCpu arguments on
+    // createProcess still win (restricted S2h/S5b–S5e demos).
+    if processDefaultMultiCpuEl0 || s5fRunAnyPlacementActive {
         return processNextS5fRunAnyHomeCpu()
     }
-    // Default placement remains CPU0. The restricted S2h coproc path passes an
-    // explicit home CPU while its secondary scheduler run mask is open; S5f is
-    // the first gated path that exercises the default placement policy itself.
+    // Pre-S5g default: CPU0 only. The restricted S2h coproc path passes an
+    // explicit home CPU while its secondary scheduler run mask is open.
     return 0
 }
 
@@ -3173,6 +3198,248 @@ func processRunS5fRunAnyPlacement(_ image: UInt, _ size: UInt,
 
 func processLastS5fRunAnyExitOkCount() -> UInt64 { lastS5fRunAnyExitOkCount }
 func processLastS5fRunAnyProcessCount() -> UInt64 { lastS5fRunAnyProcessCount }
+
+/// S5g: permanently enable multi-CPU EL0. Starts every online secondary that
+/// already has a timer heartbeat, then makes run-any the default placement for
+/// new ready processes/threads. Idempotent. Returns the number of CPUs that can
+/// schedule EL0 after enable (at least 1). Call only after the restricted S2h–S5f
+/// demos have closed their temporary secondary run masks.
+@discardableResult
+func processEnableDefaultMultiCpuEl0() -> UInt32 {
+    if processDefaultMultiCpuEl0 {
+        var count: UInt32 = 1
+        var cpu: UInt32 = 1
+        while cpu < processRunQueueCpuCount && cpu < platform.cpuCount {
+            if processCpuCanSchedule(cpu) { count &+= 1 }
+            cpu += 1
+        }
+        return count
+    }
+
+    let primary = currentCpuId()
+    var schedulerCount: UInt32 = 1
+    var cpu: UInt32 = 1
+    while cpu < processRunQueueCpuCount && cpu < platform.cpuCount {
+        if processValidSchedulerCpu(cpu) &&
+           smpCpuOnline(cpu) &&
+           smpPerCpuTimerTicks(cpu) != 0 {
+            processStartSecondaryScheduler(cpu: cpu)
+            schedulerCount &+= 1
+        }
+        cpu += 1
+    }
+    s5fNextPlacementCpu = primary
+    processDefaultMultiCpuEl0 = true
+    smpStoreBarrier()
+    return schedulerCount
+}
+
+func processDefaultMultiCpuEl0Enabled() -> Bool { processDefaultMultiCpuEl0 }
+
+private func resetLastS5gDefaultPlacementTelemetry() {
+    lastS5gDefaultPlacementTelemetryValid = false
+    lastS5gDefaultPlacementProcessCount = 0
+    lastS5gDefaultPlacementSchedulerCpuMask = 0
+    lastS5gDefaultPlacementDispatchCpuMask = 0
+    lastS5gDefaultPlacementSecondaryCpuMask = 0
+    lastS5gDefaultPlacementDispatchCount = 0
+    lastS5gDefaultPlacementExactCpuMatchCount = 0
+    lastS5gDefaultPlacementPolicySelectionCount = 0
+    if s5gDefaultPlacementSlots != nil {
+        for slot in processSlotRange() {
+            s5gDefaultPlacementSlots[slot] = -1
+        }
+    }
+}
+
+/// S5g acceptance: under permanent default multi-CPU placement (no s5f gate
+/// flag), create more processes than CPUs with unassigned home CPUs and prove
+/// they were placed across the scheduler CPU set. Leaves secondaries running.
+func processRunS5gDefaultPlacementCheck(_ image: UInt, _ size: UInt,
+                                        _ packed: UInt, _ packedLen: UInt, _ argc: Int) {
+    let primary = currentCpuId()
+    resetLastS5gDefaultPlacementTelemetry()
+    if !processDefaultMultiCpuEl0 {
+        uartPuts("panic: S5g default placement check requires processEnableDefaultMultiCpuEl0\n")
+        while true {}
+    }
+
+    var schedulerCpuMask = processCpuBit(primary)
+    var cpu: UInt32 = 1
+    while cpu < processRunQueueCpuCount && cpu < platform.cpuCount {
+        if processCpuCanSchedule(cpu) {
+            schedulerCpuMask |= processCpuBit(cpu)
+        }
+        cpu += 1
+    }
+
+    // Policy selections are counted only while we create; snapshot the baseline
+    // so the self-test can attribute selections to this check alone.
+    let policyBaseline = lastS5fRunAnyPolicySelectionCount
+
+    var processCount = Int(platform.cpuCount) + 2
+    if processCount > processSlotCapacity() { processCount = processSlotCapacity() }
+    if processCount < 1 { processCount = 1 }
+
+    // Deliberately do NOT set s5fRunAnyPlacementActive: placement must come
+    // only from processDefaultMultiCpuEl0.
+    var idx = 0
+    while idx < processCount {
+        let slot = createProcess(image, size, packed: packed, packedLen: packedLen,
+                                 argc: argc, parent: -1, inherit: .all,
+                                 inheritSpecsVA: 0, inheritSpecCount: 0,
+                                 homeCpu: unassignedCpu)
+        if slot < 0 {
+            uartPuts("panic: createProcess (S5g default placement) failed\n")
+            while true {}
+        }
+        s5gDefaultPlacementSlots[idx] = slot
+        idx += 1
+    }
+
+    schedule(until: {
+        var slotIndex = 0
+        while slotIndex < processCount {
+            let slot = s5gDefaultPlacementSlots[slotIndex]
+            if slot < 0 ||
+               pState[slot] != pZombie ||
+               !pSchedulerQuiesced[slot] {
+                return false
+            }
+            slotIndex += 1
+        }
+        return true
+    })
+
+    smpLoadBarrier()
+    var dispatchCpuMask: UInt64 = 0
+    var secondaryCpuMask: UInt64 = 0
+    var dispatchCount: UInt64 = 0
+    var exactCpuMatchCount: UInt64 = 0
+    idx = 0
+    while idx < processCount {
+        let slot = s5gDefaultPlacementSlots[idx]
+        let home = pHomeCpu[slot]
+        let homeMask = processCpuBit(home)
+        if home != primary {
+            secondaryCpuMask |= homeMask
+        }
+        dispatchCpuMask |= pDispatchCpuMask[slot]
+        dispatchCount &+= pDispatchCount[slot]
+        if pDispatchCpuMask[slot] == homeMask && pDispatchCount[slot] != 0 {
+            exactCpuMatchCount &+= 1
+        }
+        idx += 1
+    }
+
+    lastS5gDefaultPlacementProcessCount = UInt64(processCount)
+    lastS5gDefaultPlacementSchedulerCpuMask = schedulerCpuMask
+    lastS5gDefaultPlacementDispatchCpuMask = dispatchCpuMask
+    lastS5gDefaultPlacementSecondaryCpuMask = secondaryCpuMask
+    lastS5gDefaultPlacementDispatchCount = dispatchCount
+    lastS5gDefaultPlacementExactCpuMatchCount = exactCpuMatchCount
+    lastS5gDefaultPlacementPolicySelectionCount =
+        lastS5fRunAnyPolicySelectionCount &- policyBaseline
+    lastS5gDefaultPlacementTelemetryValid = true
+
+    idx = 0
+    while idx < processCount {
+        let slot = s5gDefaultPlacementSlots[idx]
+        if slot >= 0 { reapProcess(slot) }
+        s5gDefaultPlacementSlots[idx] = -1
+        idx += 1
+    }
+}
+
+private func processS5gDefaultPlacementFail(_ code: UInt64) -> Bool {
+    uartPuts("S5g default placement fail ")
+    uartPutUInt(code)
+    uartPuts("\n")
+    return false
+}
+
+/// S5g self-test: permanent default multi-CPU is on, secondaries stay online,
+/// and the default-placement check (no s5f gate flag) covered the scheduler set.
+func processS5gDefaultPlacementSelfTest() -> Bool {
+    let primary = currentCpuId()
+    if primary != 0 || !processValidSchedulerCpu(primary) {
+        return processS5gDefaultPlacementFail(1)
+    }
+    if !processDefaultMultiCpuEl0 {
+        return processS5gDefaultPlacementFail(2)
+    }
+    if !lastS5gDefaultPlacementTelemetryValid {
+        return processS5gDefaultPlacementFail(3)
+    }
+    if lastS5gDefaultPlacementProcessCount == 0 ||
+       lastS5gDefaultPlacementPolicySelectionCount != lastS5gDefaultPlacementProcessCount {
+        return processS5gDefaultPlacementFail(4)
+    }
+    let primaryMask = processCpuBit(primary)
+    if (lastS5gDefaultPlacementSchedulerCpuMask & primaryMask) == 0 {
+        return processS5gDefaultPlacementFail(5)
+    }
+    if lastS5gDefaultPlacementDispatchCpuMask != lastS5gDefaultPlacementSchedulerCpuMask {
+        return processS5gDefaultPlacementFail(6)
+    }
+    if lastS5gDefaultPlacementExactCpuMatchCount != lastS5gDefaultPlacementProcessCount {
+        return processS5gDefaultPlacementFail(7)
+    }
+    if lastS5gDefaultPlacementDispatchCount < lastS5gDefaultPlacementProcessCount {
+        return processS5gDefaultPlacementFail(8)
+    }
+    if platform.cpuCount > 1 {
+        if lastS5gDefaultPlacementSecondaryCpuMask == 0 {
+            return processS5gDefaultPlacementFail(9)
+        }
+        if (lastS5gDefaultPlacementSecondaryCpuMask & primaryMask) != 0 {
+            return processS5gDefaultPlacementFail(10)
+        }
+        // Secondaries must remain online after the check (permanent ungate).
+        if (processSecondaryRunMask() & lastS5gDefaultPlacementSecondaryCpuMask) !=
+           lastS5gDefaultPlacementSecondaryCpuMask {
+            return processS5gDefaultPlacementFail(11)
+        }
+        if (processSecondaryActiveMask() & lastS5gDefaultPlacementSecondaryCpuMask) !=
+           lastS5gDefaultPlacementSecondaryCpuMask {
+            return processS5gDefaultPlacementFail(12)
+        }
+    } else if lastS5gDefaultPlacementSecondaryCpuMask != 0 ||
+              lastS5gDefaultPlacementDispatchCpuMask != primaryMask {
+        return processS5gDefaultPlacementFail(13)
+    }
+
+    var expectedCount: UInt64 = 0
+    var cpu: UInt32 = 0
+    while cpu < processRunQueueCpuCount {
+        let idx = Int(cpu)
+        let bit = processCpuBit(cpu)
+        if processRunQueueLockWord[idx] != 0 {
+            return processS5gDefaultPlacementFail(14)
+        }
+        if processRunQueueHead[idx] != noProcessSlot ||
+           processRunQueueTail[idx] != noProcessSlot ||
+           !smpPerCpuProcessRunQueueIdle(cpu) {
+            return processS5gDefaultPlacementFail(15)
+        }
+        if (lastS5gDefaultPlacementSchedulerCpuMask & bit) != 0 {
+            expectedCount &+= 1
+            if cpu >= platform.cpuCount || !processValidSchedulerCpu(cpu) {
+                return processS5gDefaultPlacementFail(16)
+            }
+            if cpu != primary && (!smpCpuOnline(cpu) || !processCpuCanSchedule(cpu)) {
+                return processS5gDefaultPlacementFail(17)
+            }
+        } else if cpu >= platform.cpuCount && processDispatchTelemetryCount[idx] != 0 {
+            return processS5gDefaultPlacementFail(18)
+        }
+        cpu += 1
+    }
+    if expectedCount == 0 || expectedCount > lastS5gDefaultPlacementProcessCount {
+        return processS5gDefaultPlacementFail(19)
+    }
+    return true
+}
 
 private func processSpawnChildWithInheritance(_ image: UInt, _ size: UInt, packed: UInt,
                                               packedLen: UInt, argc: Int,
