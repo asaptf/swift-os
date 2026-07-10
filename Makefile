@@ -4328,6 +4328,9 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SVC_SUPERVISOR_ELF) $(BASE_ROOT)/bin/svc-supervisor
 	cp $(USER_PKG_ELF) $(BASE_ROOT)/bin/pkg
 	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/busybox
+	# /bin/sh = busybox (sh applet when argv0 basename is "sh"). passwd and
+	# sshd interactive sessions use /bin/sh; without this copy, execve fails.
+	cp $(BUILD)/busybox.elf $(BASE_ROOT)/bin/sh
 	$(NCURSES_PACK_CMD)
 	$(GLIBDEMO_PACK_CMD)
 	$(MC_PACK_CMD)
