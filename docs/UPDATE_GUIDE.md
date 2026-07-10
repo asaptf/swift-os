@@ -123,7 +123,17 @@ swos-update
 swos-activate
 ```
 
-After rebooting into the trial slot, confirm it healthy:
+After rebooting into the trial slot, confirm it healthy. Prefer the unified
+operator path (confirms base and kernel halves when present, raises the
+anti-rollback floor):
+
+```sh
+swupdate confirm
+# or, only when sshd + nginx are running:
+swupdate confirm --auto
+```
+
+The low-level base-only tool remains:
 
 ```sh
 swos-confirm
@@ -135,6 +145,7 @@ Minimum verification:
 ./tests/ab_stage_test.sh
 ./tests/ab_activate_test.sh
 ./tests/ab_confirm_test.sh
+./tests/os_confirm_test.sh   # OS-5 unified confirm + floor bump
 ```
 
 Rollback is automatic for the checked base-image A/B path when a trial slot

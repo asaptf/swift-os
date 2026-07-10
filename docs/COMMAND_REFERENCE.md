@@ -1399,17 +1399,24 @@ Notes:
 
 ### `swupdate`
 
-Update the **hosted static site** (the nginx docroot) on a running box without a
-base-image reflash. nginx serves from `/data/www/current` on the persistent `/data`
-tier; `swupdate` seeds it, and atomically swaps in a new generation from a signed
-bundle. This is content-only — it does **not** update the kernel or base image
-(use the A/B commands above for those). Build a bundle with the host `sitepack`
-tool ([HOST_TOOL_REFERENCE.md](HOST_TOOL_REFERENCE.md)).
+Operator front-end for **site** updates and **OS** self-update on a running box.
+
+**Site (content-only):** nginx serves from `/data/www/current` on the persistent
+`/data` tier; `swupdate` seeds it and atomically swaps in a new generation from a
+signed `SWSITE` bundle. Build with host `sitepack`
+([HOST_TOOL_REFERENCE.md](HOST_TOOL_REFERENCE.md)).
+
+**OS (kernel + base):** a signed `SWSYS` v2 bundle (host `syspack`) stages both
+halves into inactive A/B slots and flips the coordinated selector. After a healthy
+trial boot, `confirm` pins the generation and raises the anti-rollback floor.
 
 ```text
-swupdate seed                      # boot-time: seed/recover /data/www/current
-swupdate apply-local <bundle.swsite>   # apply a local signed bundle (offline/testing)
-swupdate site <https-url>          # fetch a signed bundle over HTTPS and apply it
+swupdate seed                          # boot-time: seed/recover /data/www/current
+swupdate apply-local <bundle.swsite>   # apply a local signed site bundle
+swupdate site <https-url>              # fetch a signed site bundle over HTTPS and apply
+swupdate os <https-url>                # fetch a signed SWSYS OS bundle and stage+activate
+swupdate os-apply-local <bundle.swsys> # stage+activate a local SWSYS bundle (offline/test)
+swupdate confirm [--auto]              # health-confirm the booted OS generation (OS-5)
 ```
 
 `seed` runs automatically from `/bin/swos-init` before any service: on an empty
@@ -1421,27 +1428,57 @@ a crash-interrupted swap (finishing `next`→`current`, or rolling back to `prev
 `/data/www/next` and atomically swapping (`current`→`prev`, `next`→`current`). The
 previous generation is retained in `/data/www/prev` for rollback.
 
-Expected success:
+`os` / `os-apply-local` verify the SWSYS bundle against `/etc/swupdate/os-root.pub`
+(same image-signing key as base/kernel), stream the base into the inactive
+SWOSBOOT slot and (when an ESP is present) the padded kernel into the inactive
+ESP slot, then flip the single ESP selector so kernel + base activate together.
+Needs `capConsole`. A version ≤ the anti-rollback floor is refused.
+
+`confirm` marks the booted generation healthy: base A/B via `update_confirm` and
+kernel A/B via `kernel_confirm` (best-effort per half). Confirm also raises the
+anti-rollback floor to the confirmed base slot's `system_version`. With
+`--auto`, confirm runs only when process-presence health sees both `sshd` and
+`nginx`; otherwise the slot stays on trial for attempt-based rollback.
+
+Expected site success:
 
 ```text
 swupdate: applied site bundle; /data/www/current updated
 ```
 
-A bad bundle is refused without touching the live docroot:
+Expected OS confirm success:
+
+```text
+swupdate: base A/B slot confirmed healthy
+```
+
+`--auto` on an unhealthy box (services not up):
+
+```text
+swupdate: confirm --auto: services not healthy (need sshd + nginx running); leaving slot on trial
+```
+
+A bad site bundle is refused without touching the live docroot:
 
 ```text
 swupdate: bundle signature INVALID — rejected
 ```
 
+Acceptance: site path `tests/site_update_test.sh`; OS stage/update
+`tests/os_update_test.sh` / `tests/os_stage_test.sh`; OS-5 confirm
+`tests/os_confirm_test.sh` (`make os-confirm-test`); coordinated install
+`tests/uefi_os_install_test.sh`.
+
 Notes:
 
 - **Security.** The trigger is gated by the operator SSH key (the bounded-exec
   allowlist permits `/bin/*`); the content by the Ed25519 bundle signature. No
-  scp, no writable root. TLS provides confidentiality only (the cert is not yet
-  verified) — the signature is the authenticity anchor, so a MITM serving a
-  different bundle fails verification.
+  scp, no writable root. HTTPS cert verification is on by default (`--insecure`
+  for mock bring-up only); the payload signature remains the authenticity anchor.
 - **Inode budget.** datafs holds 256 inodes total; with `current`+`next`+`prev`
-  that is ~3× the site, so a bundle is capped at 64 entries.
+  that is ~3× the site, so a site bundle is capped at 64 entries.
+- Low-level half-tools remain: `swos-confirm` / `swos-kconfirm` for base-only or
+  kernel-only confirm; prefer `swupdate confirm` for the unified path.
 - Acceptance coverage: `make site-seed-test`, `make site-bundle-test`,
   `make site-update-test`.
 

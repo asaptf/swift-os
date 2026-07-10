@@ -9254,3 +9254,26 @@ move kernel + base together under the coordinated selector from OS-1a/1b.
 
 **OS-1c complete.** Next OS work: OS-5 (health / unified confirm), OS-6
 (aggregate test + real-HW Console gate). See `docs/OS_UPDATE_AUDIT.md`.
+
+## OS-5: unified confirm + anti-rollback floor (DONE, f79e1c2)
+
+Closes the health-confirm half of OS self-update and the anti-rollback loop:
+
+- **`swupdate confirm`** — one operator command confirms the booted generation:
+  base via `update_confirm` (syscall 65) and kernel via `kernel_confirm` (70),
+  best-effort per half (`ENODEV` if that topology is absent).
+- **`swupdate confirm --auto`** — only confirms when process-presence health
+  sees both `sshd` and `nginx` (no IPv4 loopback self-connect on this stack);
+  otherwise leaves the slot on trial for attempt-based rollback.
+- **Floor bump** — `updateStoreConfirm()` raises `minSystemVersion` to the
+  confirmed slot's `system_version`, so a healthy box cannot be staged back
+  onto that-or-older OS. Logs `anti-rollback floor raised to N`.
+- **Gate:** `make os-confirm-test` — `--auto` refuses on an unhealthy box (no
+  floor bump); explicit confirm raises floor to 5; stage v5 refused, v6 OK.
+- **No-boot rollback** (already shipped): U1d store path
+  (`tests/ab_rollback_test.sh`) and UEFI kernel-state path
+  (`tests/uefi_krollback_test.sh`).
+
+**OS-5 complete.** Remaining OS work is **OS-6** (aggregate trial-boot e2e +
+real-HW Console gate). Optional polish: init-driven `confirm --auto` after
+services come up. See `docs/OS_UPDATE_AUDIT.md`.

@@ -17,11 +17,12 @@ opened (OS-1a…OS-1c, OS-2…OS-5 staging paths — see the per-step sections b
 
 **Still open / product-facing gaps:**
 
-- unified health/`confirm` auto-path and a single `make os-update-test` that
-  exercises a full trial-boot + rollback story end-to-end (OS-5/OS-6);
+- a single aggregate **OS-6** gate that exercises full trial-boot + rollback
+  end-to-end across the coordinated topology (pieces already have per-path tests);
 - **real-hardware Console validation** on Hetzner (QEMU cannot catch the
   boot/driver bugs that only appear on Ampere/KVM — the netPump lesson);
-- optional polish (delta bundles, streaming verify for very large bases).
+- optional polish (delta bundles, streaming verify for very large bases,
+  init-driven `confirm --auto` after services come up).
 
 ## What is REAL (implemented, tested, in `make test`)
 
@@ -89,14 +90,17 @@ opened (OS-1a…OS-1c, OS-2…OS-5 staging paths — see the per-step sections b
    **RESOLVED (OS-3 + OS-1c-2b).** Streaming stage for base + kernel install from
    userland buffers (swupdate holds the verified bundle in memory / `/data`).
 
-5. **No unified `confirm` / auto-confirm.** Confirm is still split
-   (`swos-confirm` + `swos-kconfirm`), both manual. No `/bin/swupdate confirm` and
-   no auto-confirm on "services healthy (sshd+nginx up)". → **OS-5**.
+5. ~~**No unified `confirm` / auto-confirm.**~~ **RESOLVED (OS-5, `f79e1c2`).**
+   `swupdate confirm` confirms base (update_confirm) and kernel (kernel_confirm)
+   best-effort; `confirm --auto` gates on process-presence of `sshd` + `nginx`.
+   Confirm also raises the anti-rollback floor to the confirmed slot's
+   `system_version`. Low-level tools (`swos-confirm` / `swos-kconfirm`) remain.
+   Gate: `make os-confirm-test`. Attempt-based no-boot rollback stays on the
+   existing U1d / UEFI loader paths (`ab_rollback_test`, `uefi_krollback_test`).
 
-6. **`make os-update-test` exists for pieces**, but the full trial-boot +
-   rollback story and — critically — **real-hardware validation** are still
-   open. Per the netPump lesson, every boot/driver-path change must be checked
-   on the live box via Console. → **OS-6 / Hetzner**.
+6. **Aggregate e2e + real-hardware validation** still open. Per-path QEMU tests
+   exist; a single full trial-boot→confirm/rollback story across the coordinated
+   topology and — critically — live Hetzner Console checks are **OS-6**.
 
 ## Proposed staged plan (one submilestone at a time, build+boot+test+commit+stop)
 
@@ -114,10 +118,10 @@ opened (OS-1a…OS-1c, OS-2…OS-5 staging paths — see the per-step sections b
 - **OS-4 `/bin/swupdate os <url>` + monotonic anti-rollback:** HTTPS fetch → verify
   signature **and** version > installed → stage both slots → coordinated atomic
   flip → trial-boot flag + reset attempts → reboot.
-- **OS-5 Health + auto-rollback + `confirm`:** unify confirm (`swupdate confirm`),
-  optional auto-confirm when sshd+nginx are up; rely on existing loader/kernel
-  attempt-rollback for the no-boot case; verify the no-boot rollback end-to-end.
-- **OS-6 `make os-update-test`** (QEMU) **+ real-Hetzner runbook** and Console check.
+- **OS-5 Health + auto-rollback + `confirm`:** DONE (`f79e1c2`) — see GAPS §5.
+  `swupdate confirm` / `confirm --auto`; floor bump; `make os-confirm-test`.
+  No-boot rollback covered by existing U1d / UEFI attempt-rollback tests.
+- **OS-6 aggregate e2e + real-Hetzner runbook** and Console check (remaining).
 
 ## Open decisions (need a call before OS-1/OS-3)
 
