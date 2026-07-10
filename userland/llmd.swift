@@ -590,6 +590,11 @@ func main(_ argc: Int32,
     }
     swiftos_puts("llmd: weights mmap'd file-backed from /models\n")
 
+    // LM2: multi-thread matmul across present CPUs (S5g places workers on them).
+    _ = swiftos_sysinfo_refresh()
+    let cpus = Int(swiftos_sys_cpu_count())
+    _ = llamaMatmulPoolStart(requested: cpus > 0 ? cpus : 1)
+
     let lfd = swiftos_socket_stream()
     if lfd < 0 { swiftos_puts("llmd: socket failed (capNet?)\n"); return 1 }
 

@@ -157,6 +157,89 @@ func llamaFDot(_ a: UnsafePointer<Float>, _ b: UnsafePointer<Float>, _ n: Int) -
     return s
 }
 
+// MARK: - Matmul row kernels + dispatch hooks (LM2)
+//
+// The hot path is "for each output row, dot a weight row with the activation".
+// Serial loops call these pure row-range kernels. LM2 installs a multi-thread
+// dispatch (userland/lib/llama_matmul_pool.swift) that splits the row range
+// across EL0 threads; host unit tests leave the hook unset and stay serial.
+// Hooks are optional C function pointers so Embedded Swift never needs closures
+// across threads and host builds of llama2.swift alone stay Foundation-free.
+
+/// xout[rowStart..<rowEnd] = W[rowStart..<rowEnd, :] @ xin (fp32 weights).
+@inline(__always)
+func llamaMatmulF32Rows(_ xout: UnsafeMutablePointer<Float>,
+                        _ xin: UnsafePointer<Float>,
+                        _ wt: UnsafePointer<Float>,
+                        _ n: Int, _ rowStart: Int, _ rowEnd: Int) {
+    var i = rowStart
+    while i < rowEnd {
+        xout[i] = llamaFDot(wt + i * n, xin, n)
+        i += 1
+    }
+}
+
+/// One group-quantized matmul row range (int8 weights + per-group scales).
+@inline(__always)
+func llamaQMatmulRows(_ xout: UnsafeMutablePointer<Float>,
+                      _ xq: UnsafePointer<Int8>, _ xs: UnsafePointer<Float>,
+                      _ wq: UnsafePointer<Int8>, _ ws: UnsafePointer<Float>,
+                      _ n: Int, _ gs: Int, _ rowStart: Int, _ rowEnd: Int) {
+    var i = rowStart
+    while i < rowEnd {
+        var val: Float = 0
+        let iN = i * n
+        var j = 0
+        while j + gs <= n {
+            let ival = llamaQDotGroup(xq + j, wq + (iN + j), gs)
+            val += Float(ival) * ws[(iN + j) / gs] * xs[j / gs]
+            j += gs
+        }
+        xout[i] = val
+        i += 1
+    }
+}
+
+/// Optional EL0 parallel dispatch (set by llama_matmul_pool). Signature:
+/// (xout, xin, wt, n, d) — covers the full output height d.
+public typealias LlamaMatmulF32Dispatch =
+    @convention(c) (UnsafeMutablePointer<Float>, UnsafePointer<Float>,
+                    UnsafePointer<Float>, Int32, Int32) -> Void
+
+/// Optional EL0 parallel dispatch for qmatmul.
+/// (xout, xq, xs, wq, ws, n, d, gs)
+public typealias LlamaQMatmulDispatch =
+    @convention(c) (UnsafeMutablePointer<Float>, UnsafePointer<Int8>,
+                    UnsafePointer<Float>, UnsafePointer<Int8>,
+                    UnsafePointer<Float>, Int32, Int32, Int32) -> Void
+
+public var llamaMatmulF32Dispatch: LlamaMatmulF32Dispatch? = nil
+public var llamaQMatmulDispatch: LlamaQMatmulDispatch? = nil
+
+@inline(__always)
+func llamaMatmulF32(_ xout: UnsafeMutablePointer<Float>,
+                    _ xin: UnsafePointer<Float>,
+                    _ wt: UnsafePointer<Float>,
+                    _ n: Int, _ d: Int) {
+    if let run = llamaMatmulF32Dispatch {
+        run(xout, xin, wt, Int32(n), Int32(d))
+    } else {
+        llamaMatmulF32Rows(xout, xin, wt, n, 0, d)
+    }
+}
+
+@inline(__always)
+func llamaQMatmul(_ xout: UnsafeMutablePointer<Float>,
+                  _ xq: UnsafePointer<Int8>, _ xs: UnsafePointer<Float>,
+                  _ wq: UnsafePointer<Int8>, _ ws: UnsafePointer<Float>,
+                  _ n: Int, _ d: Int, _ gs: Int) {
+    if let run = llamaQMatmulDispatch {
+        run(xout, xq, xs, wq, ws, Int32(n), Int32(d), Int32(gs))
+    } else {
+        llamaQMatmulRows(xout, xq, xs, wq, ws, n, gs, 0, d)
+    }
+}
+
 // MARK: - Model configuration + weights
 
 struct LlamaConfig {
@@ -291,12 +374,10 @@ final class Llama2 {
         for i in 0..<size { a[i] /= sum }
     }
 
-    // xout(d) = W(d,n) @ x(n)
+    // xout(d) = W(d,n) @ x(n). LM1 NEON dots; LM2 may fan rows across threads.
     private func matmul(_ xout: UnsafeMutablePointer<Float>, _ xin: UnsafePointer<Float>,
                         _ wt: UnsafePointer<Float>, _ n: Int, _ d: Int) {
-        for i in 0..<d {
-            xout[i] = llamaFDot(wt + i * n, xin, n)   // LM1: NEON-vectorized
-        }
+        llamaMatmulF32(xout, xin, wt, n, d)
     }
 
     /// One decode step. Returns the logits pointer (vocabSize values).
@@ -580,22 +661,11 @@ final class QLlama2: LlamaModel {
 
     /// xout(d) = W(d,n) @ x(n) over quantized operands: int32 accumulation per
     /// group of GS, scaled by the weight-group and activation-group scales.
+    /// LM1 NEON group dots; LM2 may fan rows across threads.
     private func qmatmul(_ xout: UnsafeMutablePointer<Float>,
                          _ xq: UnsafePointer<Int8>, _ xs: UnsafePointer<Float>,
                          _ w: QT, _ n: Int, _ d: Int) {
-        for i in 0..<d {
-            var val: Float = 0
-            let iN = i * n
-            var j = 0
-            while j + gs <= n {
-                // LM1: NEON-vectorized int32 group dot (bit-identical to scalar,
-                // proven in QEMU by /bin/simdprobe).
-                let ival = llamaQDotGroup(xq + j, w.q + (iN + j), gs)
-                val += Float(ival) * w.s[(iN + j) / gs] * xs[j / gs]
-                j += gs
-            }
-            xout[i] = val
-        }
+        llamaQMatmul(xout, xq, xs, w.q, w.s, n, d, gs)
     }
 
     private func rmsnorm(_ o: UnsafeMutablePointer<Float>, _ xin: UnsafePointer<Float>,

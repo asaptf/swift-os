@@ -1055,14 +1055,18 @@ private func processMirrorRunQueueForCpu(_ cpu: UInt32) {
 
 private func processHomeCpuForNewReadySlot(_ slot: Int) -> UInt32 {
     if !processSlotValid(slot) { return unassignedCpu }
-    // S5f gate (boot demos) and S5g permanent default both use run-any across
-    // CPU0 plus online secondary scheduler CPUs. Explicit homeCpu arguments on
-    // createProcess still win (restricted S2h/S5b–S5e demos).
-    if processDefaultMultiCpuEl0 || s5fRunAnyPlacementActive {
+    // S5f boot demos force run-any for top-level processes while their gate is
+    // open. After S5g, secondary schedulers stay online permanently, but only
+    // *threads* (shared-address-space workers: LLM matmul pool, pthread, etc.)
+    // default to run-any. Top-level processes stay on CPU0 so UART/console
+    // wakeups (IRQ on CPU0) and the login path remain reliable without a full
+    // cross-CPU reschedule-IPI story for every blocked process.
+    if s5fRunAnyPlacementActive {
         return processNextS5fRunAnyHomeCpu()
     }
-    // Pre-S5g default: CPU0 only. The restricted S2h coproc path passes an
-    // explicit home CPU while its secondary scheduler run mask is open.
+    if processDefaultMultiCpuEl0 && pIsThread[slot] {
+        return processNextS5fRunAnyHomeCpu()
+    }
     return 0
 }
 
@@ -3252,9 +3256,11 @@ private func resetLastS5gDefaultPlacementTelemetry() {
     }
 }
 
-/// S5g acceptance: under permanent default multi-CPU placement (no s5f gate
-/// flag), create more processes than CPUs with unassigned home CPUs and prove
-/// they were placed across the scheduler CPU set. Leaves secondaries running.
+/// S5g acceptance: secondary schedulers are permanently online; briefly open
+/// the process-level run-any gate to place a coproc batch across CPUs (proving
+/// secondaries still schedule EL0), then leave secondaries online for thread
+/// workers. Permanent default placement remains threads-only so console/login
+/// stay on CPU0.
 func processRunS5gDefaultPlacementCheck(_ image: UInt, _ size: UInt,
                                         _ packed: UInt, _ packedLen: UInt, _ argc: Int) {
     let primary = currentCpuId()
@@ -3281,8 +3287,9 @@ func processRunS5gDefaultPlacementCheck(_ image: UInt, _ size: UInt,
     if processCount > processSlotCapacity() { processCount = processSlotCapacity() }
     if processCount < 1 { processCount = 1 }
 
-    // Deliberately do NOT set s5fRunAnyPlacementActive: placement must come
-    // only from processDefaultMultiCpuEl0.
+    // Temporary process-level run-any over permanently-online secondaries.
+    s5fRunAnyPlacementActive = true
+    s5fNextPlacementCpu = primary
     var idx = 0
     while idx < processCount {
         let slot = createProcess(image, size, packed: packed, packedLen: packedLen,
@@ -3290,12 +3297,14 @@ func processRunS5gDefaultPlacementCheck(_ image: UInt, _ size: UInt,
                                  inheritSpecsVA: 0, inheritSpecCount: 0,
                                  homeCpu: unassignedCpu)
         if slot < 0 {
+            s5fRunAnyPlacementActive = false
             uartPuts("panic: createProcess (S5g default placement) failed\n")
             while true {}
         }
         s5gDefaultPlacementSlots[idx] = slot
         idx += 1
     }
+    s5fRunAnyPlacementActive = false
 
     schedule(until: {
         var slotIndex = 0
@@ -3715,6 +3724,11 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
         let home = processNextS5eThreadHomeCpu()
         recordS5eThreadCreate(creator: creator, slot: slot, homeCpu: home)
         markProcessReady(slot, cpu: home)
+    } else if processDefaultMultiCpuEl0 {
+        // S5g: fan worker threads across permanently-online secondaries so
+        // multi-thread pools (LM2 matmul) can use every core. Explicit S5e
+        // placement above still wins for the boot demo.
+        markProcessReady(slot, cpu: processNextS5fRunAnyHomeCpu())
     } else {
         markProcessReadyOnHomeCpu(slot)
     }
@@ -4516,11 +4530,20 @@ func processMmap(_ addr: UInt, _ len: UInt, _ prot: Int32, _ flags: Int32) -> UI
         return err(-12) // ENOMEM
     }
 
+    // When multi-CPU EL0 is permanently online (S5g), threads may run this
+    // address space on any scheduler CPU even if they have not activated it
+    // yet. Include every online scheduler CPU in the mmap TLB mask so a
+    // secondary that later takes a new thread does not keep a stale TLB entry
+    // for the freshly mapped stack/data pages (LM2 matmul pool stacks).
+    var tlbMask = processAddressSpaceActiveCpuMaskForSlot(me)
+    if processDefaultMultiCpuEl0 {
+        tlbMask |= processCpuBit(0) | processSecondaryRunMask()
+    }
     let rc = addressSpaceMmapForActiveCpuMask(pTtbr0[me],
                                               base,
                                               pages,
                                               prot,
-                                              processAddressSpaceActiveCpuMaskForSlot(me))
+                                              tlbMask)
     if rc != 0 {
         anonVmasDeactivateOverlap(me, base, pages)
         return err(Int(rc))

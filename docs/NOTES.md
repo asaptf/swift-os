@@ -8996,16 +8996,32 @@ temporary run masks, boot enables multi-CPU EL0 for ordinary userland:
 
 - `processEnableDefaultMultiCpuEl0()` starts every online secondary with a timer
   heartbeat and sets `processDefaultMultiCpuEl0`.
-- `processHomeCpuForNewReadySlot` uses the S5f run-any round-robin whenever the
-  permanent flag **or** the temporary S5f demo flag is set (explicit `homeCpu`
-  still wins for restricted demos).
-- `processRunS5gDefaultPlacementCheck` creates a coproc batch with
-  `homeCpu: unassigned` **without** setting `s5fRunAnyPlacementActive`, proving
-  the *default* path; secondaries stay online afterward.
+- **Placement policy:** temporary S5f gate still run-any for processes; permanent
+  default spreads **threads only** (shared-AS workers). Top-level processes stay
+  on CPU0 so UART/console wakeups remain reliable without a full reschedule-IPI
+  story. `processThreadCreate` uses run-any when S5g is on.
+- `processRunS5gDefaultPlacementCheck` briefly opens the S5f process gate over
+  permanently-online secondaries to prove multi-CPU process placement still
+  works; secondaries stay online afterward.
+- Anonymous `mmap` under S5g includes all scheduler CPUs in the TLB shootdown
+  mask so stacks/data mapped on CPU0 are visible to threads that first run on a
+  secondary.
 - Interactive/graphical boots that skip demos still call enable before `runInit`.
 - Acceptance: `make s5-ungate-test` (via `tests/smp_boot_test.sh` under `-smp 4`)
   requires `S5g OK: default multi-CPU EL0 placement enabled` + covered/fallback.
   Included in `make s5-test`. Unblocks LM2 worker pools.
+
+### LM2 — multi-thread matmul (DONE scaffolding, 2026-07-10)
+
+- Pure row kernels + optional C-function dispatch hooks in `llama2.swift`
+  (`llamaMatmulF32` / `llamaQMatmul`); host unit tests stay serial (hook unset).
+- EL0 pool `userland/lib/llama_matmul_pool.swift` linked into `/bin/llm` and
+  `/bin/llmd`: long-lived workers, mmap stacks, chunked row ranges, futex join.
+  Started from sysinfo CPU count; falls back to serial when only one worker.
+- Acceptance: host `llm_engine_test` golden PASS; `make`/`./tests/llm_run_test.sh`
+  PASS with `LM2: matmul pool workers=1` on 1-CPU QEMU. Multi-worker SMP stress
+  is `make llm-smp-test` (opt-in; follow-up if worker placement/TLB still
+  misbehaves under concurrent EL0 on secondaries).
 
 ### LM3a — a signed packed "model disk" (DONE, 2026-06-27)
 

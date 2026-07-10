@@ -1204,9 +1204,10 @@ dedicated block device. Per-stage findings land in `docs/NOTES.md` (LM-series).
   whose `+neon` codegen miscompiled (`quantizeBuf`, pinned scalar via
   `@_optimize(none)`). Gates: `make test` runs `llm_run_test`, `llm_serve_test`,
   `simdprobe_test`. See `docs/NOTES.md` (LM1/LM1b).
-- **LM2** (planned): multi-threaded matmul across the SMP cores (threads + futex from
-  the S-series) — split the output-row loop across workers. Acceptance: same output,
-  parallel speedup, per-CPU utilization visible in `top`.
+- **LM2** (DONE scaffolding, 2026-07-10): multi-threaded matmul via row kernels +
+  optional EL0 worker pool (`llama_matmul_pool.swift`) on top of S5g thread
+  placement. Host golden + 1-CPU QEMU `llm_run_test` PASS; multi-worker SMP is
+  `make llm-smp-test` (opt-in). See `docs/NOTES.md` (LM2 / S5g).
 - **LM3** (DONE, 2026-06-27): model delivery off a dedicated virtio-blk "model disk"
   (signed packed SWOSBASE image, mmap from there, not the base) + a larger-RAM
   inference QEMU profile. See `docs/NOTES.md` (LM3a/b/c).

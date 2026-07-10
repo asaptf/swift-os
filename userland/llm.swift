@@ -98,6 +98,13 @@ func main(_ argc: Int32,
     }
     swiftos_puts("llm: weights mmap'd file-backed from /models\n")
 
+    // LM2: multi-thread matmul. Request workers matching present CPUs; the pool
+    // falls back to serial when only one worker can be started.
+    _ = swiftos_sysinfo_refresh()
+    var cpus = Int(swiftos_sys_cpu_count())
+    if cpus < 1 { cpus = 1 }
+    _ = llamaMatmulPoolStart(requested: cpus)
+
     let model = Llama2(modelBytes: modelPtr)
     let tok = LlamaTokenizer(tokenizerBytes: tokPtr, vocabSize: model.cfg.vocabSize)
     if steps > model.cfg.seqLen { steps = model.cfg.seqLen }
