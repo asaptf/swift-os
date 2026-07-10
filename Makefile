@@ -567,6 +567,7 @@ USER_IPCCALL_ELF := $(BUILD)/ipc-call-test.elf
 USER_FDOPSDEMO_ELF := $(BUILD)/fdopsdemo.elf
 USER_S4STRESS_ELF := $(BUILD)/s4stress.elf
 USER_SATSTRESS_ELF := $(BUILD)/satstress.elf
+USER_EPCAPPROBE_ELF := $(BUILD)/epcapprobe.elf
 USER_SMPRACE_ELF := $(BUILD)/smprace.elf
 USER_EDGESTRESS_ELF := $(BUILD)/edgestress.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
@@ -772,6 +773,7 @@ BASE_EXEC_ELFS := \
 	$(USER_FDOPSDEMO_ELF) \
 	$(USER_S4STRESS_ELF) \
 	$(USER_SATSTRESS_ELF) \
+	$(USER_EPCAPPROBE_ELF) \
 	$(USER_SMPRACE_ELF) \
 	$(USER_EDGESTRESS_ELF) \
 	$(USER_SECURITYDEMO_ELF) \
@@ -962,6 +964,9 @@ $(BUILD)/user_s4stress.o: userland/s4stress.c userland/lib/syscall.h userland/li
 
 $(BUILD)/user_satstress.o: userland/satstress.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/satstress.c -o $@
+
+$(BUILD)/user_epcapprobe.o: userland/epcapprobe.c userland/lib/syscall.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/epcapprobe.c -o $@
 
 $(BUILD)/user_smprace.o: userland/smprace.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/smprace.c -o $@
@@ -1397,6 +1402,9 @@ $(USER_S4STRESS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_s4
 
 $(USER_SATSTRESS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_satstress.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_satstress.o -o $@
+
+$(USER_EPCAPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_epcapprobe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_epcapprobe.o -o $@
 
 $(USER_SMPRACE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_smprace.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_smprace.o -o $@
@@ -2644,9 +2652,12 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/qw4_badge_test.sh
 	./tests/tcp_echo_test.sh
 	./tests/tcp_connect_test.sh
+	./tests/tcpget_by_name_test.sh
 	./tests/tls_test.sh
 	./tests/httpd_test.sh
+	./tests/httpd_keepalive_test.sh
 	./tests/httpd_load_test.sh
+	./tests/max_endpoints_test.sh
 	./tests/ssh_transport_test.sh
 	./tests/ssh_runtime_entropy_test.sh
 	./tests/sshd_transport_test.sh
@@ -3296,6 +3307,18 @@ saturation-test: build $(QEMU_DTB) base-image
 
 saturation-smp-test: build $(QEMU_DTB_SMP4) base-image
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/saturation_test.sh
+
+# PT1 follow-up: prove IPC endpoint pool capacity is above the historic 16.
+max-endpoints-test: build $(QEMU_DTB) base-image
+	./tests/max_endpoints_test.sh
+
+# net-d follow-up: /bin/tcpget resolves a hostname then connects.
+tcpget-by-name-test: build $(QEMU_DTB) base-image
+	./tests/tcpget_by_name_test.sh
+
+# net-e follow-up: HTTP/1.0 keep-alive — two sequential requests on one socket.
+httpd-keepalive-test: build $(QEMU_DTB) base-image
+	./tests/httpd_keepalive_test.sh
 
 # Concurrent cross-CPU resource-churn race: N+2 copies of /bin/smprace run in
 # parallel on different CPUs (via the S5f run-any primitive) and hammer the
@@ -4234,6 +4257,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_FDOPSDEMO_ELF) $(BASE_ROOT)/bin/fdopsdemo
 	cp $(USER_S4STRESS_ELF) $(BASE_ROOT)/bin/s4stress
 	cp $(USER_SATSTRESS_ELF) $(BASE_ROOT)/bin/satstress
+	cp $(USER_EPCAPPROBE_ELF) $(BASE_ROOT)/bin/epcapprobe
 	cp $(USER_SMPRACE_ELF) $(BASE_ROOT)/bin/smprace
 	cp $(USER_EDGESTRESS_ELF) $(BASE_ROOT)/bin/edgestress
 	cp $(USER_SECURITYDEMO_ELF) $(BASE_ROOT)/bin/securitydemo

@@ -6,8 +6,12 @@
 // Per connection it parses the request path, maps it into the /www docroot on
 // the VFS, and serves it: a regular file streams with a stat-derived
 // Content-Length and an extension-derived Content-Type; a directory with no
-// index.html gets a generated HTML listing (net-h2). 404 if missing. Then it
-// closes (Connection: close). Multiple connections are serviced across poll
+// index.html gets a generated HTML listing (net-h2). 404 if missing.
+//
+// Simple HTTP/1.0 keep-alive: when the request carries `Connection: keep-alive`
+// (case-insensitive), the response uses the same header and the accepted
+// socket stays open for the next sequential request on that fd. Default is
+// still Connection: close. Multiple connections are serviced across poll
 // iterations. Exercises socket/poll/accept/read/write/close + open/stat/getdents
 // through the swiftos_* bridge.
 //
@@ -43,8 +47,77 @@ private func writeUInt(_ fd: Int32, _ v: UInt) {
     }
 }
 
-private func send404(_ fd: Int32) {
-    writeStr(fd, "HTTP/1.0 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+private func writeConnectionHeader(_ fd: Int32, keepAlive: Bool) {
+    if keepAlive {
+        writeStr(fd, "\r\nConnection: keep-alive\r\n\r\n")
+    } else {
+        writeStr(fd, "\r\nConnection: close\r\n\r\n")
+    }
+}
+
+private func send404(_ fd: Int32, keepAlive: Bool) {
+    writeStr(fd, "HTTP/1.0 404 Not Found\r\nContent-Length: 0")
+    writeConnectionHeader(fd, keepAlive: keepAlive)
+}
+
+/// ASCII lower-case for A–Z; other bytes unchanged.
+@inline(__always)
+private func lowerASCII(_ b: UInt8) -> UInt8 {
+    if b >= 0x41 && b <= 0x5A { return b &+ 0x20 }
+    return b
+}
+
+/// True if request bytes `p[0..<n]` contain a Connection: keep-alive header.
+/// Scans case-insensitively for "connection:" then skips LWS and matches
+/// "keep-alive" as the header value token.
+private func requestWantsKeepAlive(_ p: UnsafeRawPointer, _ n: Int) -> Bool {
+    // Needle "connection:" length 11.
+    if n < 11 { return false }
+    var i = 0
+    while i + 11 <= n {
+        var match = true
+        // "connection:"
+        let needle: [UInt8] = [
+            0x63, 0x6F, 0x6E, 0x6E, 0x65, 0x63, 0x74, 0x69, 0x6F, 0x6E, 0x3A
+        ]
+        var k = 0
+        while k < 11 {
+            if lowerASCII(p.load(fromByteOffset: i + k, as: UInt8.self)) != needle[k] {
+                match = false
+                break
+            }
+            k += 1
+        }
+        if match {
+            var j = i + 11
+            // Skip spaces/tabs after the colon.
+            while j < n {
+                let c = p.load(fromByteOffset: j, as: UInt8.self)
+                if c == 0x20 || c == 0x09 { j += 1; continue }
+                break
+            }
+            // "keep-alive" = 10 bytes
+            if j + 10 <= n {
+                let ka: [UInt8] = [
+                    0x6B, 0x65, 0x65, 0x70, 0x2D, 0x61, 0x6C, 0x69, 0x76, 0x65
+                ]
+                var ok = true
+                var t = 0
+                while t < 10 {
+                    if lowerASCII(p.load(fromByteOffset: j + t, as: UInt8.self)) != ka[t] {
+                        ok = false
+                        break
+                    }
+                    t += 1
+                }
+                if ok { return true }
+            }
+            i += 1
+            continue
+        }
+        i += 1
+    }
+    return false
 }
 
 /// Pick a Content-Type from the request path's extension. `p[0..<len]` is the
@@ -84,7 +157,8 @@ private func mimeType(_ p: UnsafePointer<UInt8>, _ len: Int) -> StaticString {
 /// request path (used in the page title / heading). The body is buffered so we
 /// can send an accurate Content-Length, then written in one shot.
 private func serveListing(_ cfd: Int32, _ dfd: Int32,
-                          _ reqPath: UnsafePointer<UInt8>, _ reqLen: Int) {
+                          _ reqPath: UnsafePointer<UInt8>, _ reqLen: Int,
+                          keepAlive: Bool) {
     // Cap the generated page; plenty for a demo docroot.
     let bodyCap = 8192
     withUnsafeTemporaryAllocation(of: UInt8.self, capacity: bodyCap) { body in
@@ -132,27 +206,43 @@ private func serveListing(_ cfd: Int32, _ dfd: Int32,
 
         writeStr(cfd, "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\nContent-Length: ")
         writeUInt(cfd, UInt(w))
-        writeStr(cfd, "\r\nConnection: close\r\n\r\n")
+        writeConnectionHeader(cfd, keepAlive: keepAlive)
         _ = swiftos_write(cfd, bb, UInt(w))
       }
     }
 }
 
+/// Result of handling one HTTP request on an accepted socket.
+/// - peerClosed: read returned <= 0 (drop the connection)
+/// - closeAfter: response sent with Connection: close (or error path)
+/// - keepAlive: response sent with Connection: keep-alive; leave fd open
+private enum ServeResult {
+    case peerClosed
+    case closeAfter
+    case keepAlive
+}
+
 /// Read one request from `cfd`, resolve it into /www, and serve the file (or 404).
-private func serveConnection(_ cfd: Int32) {
-  withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 256) { pathBuf in
+/// Returns whether the connection should stay open for another sequential request.
+private func serveConnection(_ cfd: Int32) -> ServeResult {
+  return withUnsafeTemporaryAllocation(of: UInt8.self, capacity: 256) { pathBuf -> ServeResult in
     let pathStore = pathBuf.baseAddress!
-    withUnsafeTemporaryAllocation(byteCount: 1024, alignment: 16) { req in
+    return withUnsafeTemporaryAllocation(byteCount: 1024, alignment: 16) { req -> ServeResult in
         let rp = req.baseAddress!
         let r = swiftos_read(cfd, rp, UInt(req.count))
-        if r <= 0 { return }
+        if r <= 0 { return .peerClosed }
         let n = Int(r)
+        let keepAlive = requestWantsKeepAlive(rp, n)
 
         @inline(__always) func rb(_ i: Int) -> UInt8 { rp.load(fromByteOffset: i, as: UInt8.self) }
+        @inline(__always) func done(_ ok: Bool) -> ServeResult {
+            if keepAlive && ok { return .keepAlive }
+            return .closeAfter
+        }
 
         // Require "GET " and a path starting with '/'.
         if n < 6 || rb(0) != 0x47 || rb(1) != 0x45 || rb(2) != 0x54 || rb(3) != 0x20 || rb(4) != 0x2F {
-            send404(cfd); return
+            send404(cfd, keepAlive: false); return .closeAfter
         }
         var pend = 4
         while pend < n {
@@ -161,11 +251,17 @@ private func serveConnection(_ cfd: Int32) {
             pend += 1
         }
         let pathLen = pend - 4
-        if pathLen <= 0 || pathLen > 200 { send404(cfd); return }
+        if pathLen <= 0 || pathLen > 200 {
+            send404(cfd, keepAlive: keepAlive)
+            return done(false)
+        }
         // Path-traversal guard: reject ".." anywhere.
         var t = 4
         while t + 1 < pend {
-            if rb(t) == 0x2E && rb(t + 1) == 0x2E { send404(cfd); return }
+            if rb(t) == 0x2E && rb(t + 1) == 0x2E {
+                send404(cfd, keepAlive: keepAlive)
+                return done(false)
+            }
             t += 1
         }
 
@@ -203,7 +299,7 @@ private func serveConnection(_ cfd: Int32) {
             if (mode & sIFMT) == sIFDIR {
                 let dfd = swiftos_open(cpath, oRdOnly)
                 if dfd < 0 { return false }
-                serveListing(cfd, dfd, reqPathPtr, pathLen)
+                serveListing(cfd, dfd, reqPathPtr, pathLen, keepAlive: keepAlive)
                 _ = swiftos_close(dfd)
                 return true
             }
@@ -219,7 +315,7 @@ private func serveConnection(_ cfd: Int32) {
             writeStr(cfd, mimeType(reqPathPtr, pathLen))
             writeStr(cfd, "\r\nContent-Length: ")
             writeUInt(cfd, size)
-            writeStr(cfd, "\r\nConnection: close\r\n\r\n")
+            writeConnectionHeader(cfd, keepAlive: keepAlive)
             if first > 0 { _ = swiftos_write(cfd, rp, UInt(first)) }
             while true {
                 let m = swiftos_read(fd, rp, UInt(req.count))
@@ -234,8 +330,13 @@ private func serveConnection(_ cfd: Int32) {
         // correct even though file serving reuses `rp`).
         swiftos_puts(served ? "httpd: 200 " : "httpd: 404 ")
         _ = swiftos_write(1, pathStore, UInt(pathLen))
+        if keepAlive { swiftos_puts(" (keep-alive)") }
         swiftos_putc(0x0A)
-        if !served { send404(cfd) }
+        if !served {
+            send404(cfd, keepAlive: keepAlive)
+            return done(false)
+        }
+        return done(true)
     }
   }
 }
@@ -286,9 +387,14 @@ func main(_ argc: Int32,
                 let rev = base.load(fromByteOffset: slot * 8 + 6, as: Int16.self)
                 slot += 1
                 if (rev & pollIn) == 0 { continue }
-                serveConnection(conns[ci])
-                _ = swiftos_close(conns[ci])
-                conns[ci] = -1
+                switch serveConnection(conns[ci]) {
+                case .keepAlive:
+                    // Leave conns[ci] open for the next sequential request.
+                    break
+                case .peerClosed, .closeAfter:
+                    _ = swiftos_close(conns[ci])
+                    conns[ci] = -1
+                }
             }
 
             let lrev = base.load(fromByteOffset: 6, as: Int16.self)

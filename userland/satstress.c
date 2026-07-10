@@ -12,7 +12,7 @@
 //
 // Pools exercised (limits as of this writing; the test does not hard-code them,
 // it discovers the ceiling where a fixed ceiling still exists): per-process fds
-// (maxFDs=512), pipes (maxPipes=16), IPC endpoints (maxEndpoints=16). A small
+// (maxFDs=512), pipes (maxPipes=16), IPC endpoints (maxEndpoints=32). A small
 // fork/reap burst keeps process-slot reuse covered without treating the growable
 // process table as a bounded saturation target. A vnode create/unlink churn
 // confirms the tmpfs node pool stays balanced under repeated allocation without

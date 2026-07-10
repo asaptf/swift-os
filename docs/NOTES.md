@@ -3,6 +3,25 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## Easy local follow-ups — tcpget-by-name, maxEndpoints, httpd keep-alive (2026-07-10)
+
+Landed three deferred easy items without hardware or external registries:
+
+- **tcpget hostname resolve→connect:** `/bin/tcpget` accepts a DNS name (or
+  dotted IPv4). Optional DNS server IP/port (argv 3–4) match `/bin/nslookup` for
+  hermetic tests. Prints `tcpget: resolved HOST -> IP` and
+  `tcpget: connected by name`. Gate: `make tcpget-by-name-test` /
+  `tests/tcpget_by_name_test.sh`.
+- **maxEndpoints 16 → 32:** `kernel/vfs/vfs.swift` pool raised; `/bin/epcapprobe`
+  allocates until refuse and requires n > 16. Gate: `make max-endpoints-test` /
+  `tests/max_endpoints_test.sh` (observed n=31 with one pre-used system slot).
+- **httpd HTTP/1.0 keep-alive:** when the request has `Connection: keep-alive`,
+  respond in kind and leave the accepted socket open for the next sequential
+  request. Gate: `make httpd-keepalive-test` / `tests/httpd_keepalive_test.sh`.
+
+Also wired into `make test`. Existing `tcp_connect` / `httpd` / `dns` smoke still
+pass.
+
 ## NPM44 — `npm --version` reliable on SwiftOS (2026-07-02)
 
 Merged to `origin/main` via PR #6 (`a71350bea`). Completes the npm beachhead:

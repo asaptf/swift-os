@@ -219,7 +219,9 @@ private var vfsProcessStates: UnsafeMutablePointer<VFSProcessState>! = nil
 private var openDescriptions = [OpenDescription](repeating: OpenDescription(), count: maxOpenDescriptions)
 private var pipes = [Pipe](repeating: Pipe(), count: maxPipes)
 private var eventCounters = [EventCounter](repeating: EventCounter(), count: maxEvents)
-private let maxEndpoints = 16
+// Raised 16 → 32 for IPC-heavy multi-service loads (PT1 follow-up). satstress
+// discovers the ceiling at runtime; tests/max_endpoints_test.sh requires >16.
+private let maxEndpoints = 32
 private var endpoints = [Endpoint](repeating: Endpoint(), count: maxEndpoints)
 // QW2: per-endpoint blocked-receiver waiter table. A receiver that finds an
 // empty endpoint parks here (slot index) instead of busy-yielding through the
