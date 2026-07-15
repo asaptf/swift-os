@@ -1185,6 +1185,8 @@ diagnostic fixtures than stable application interfaces.
 | `swos-init` | `swos-init` | Start allowlisted boot services from `/etc/swos/services`, then exec `console-login` or supervise opt-in service tokens. | `tests/sshd_transport_test.sh`, `tests/sshd_supervision_test.sh` |
 | `console-login` | `console-login` | Run the serial login program used after boot init. | `tests/console_login_test.sh` |
 | `busybox` | `busybox [APPLET] [ARGS...]` | Login shell and compatibility applet provider. | `tests/busybox_test.sh`, `tests/vi_test.sh` |
+| `sh` | `sh [ARGS...]` | POSIX shell entrypoint: a staged copy of busybox that runs the `sh` applet when argv0 basename is `sh`. Used as the passwd/sshd interactive shell and by `crond` via `/bin/sh -c`. | `tests/busybox_test.sh`, `tests/crond_test.sh` |
+| `epcapprobe` | `epcapprobe` | Prove the IPC endpoint pool can allocate more than the historic 16 pairs (current `maxEndpoints` is 32): allocate until refuse, close, recover one pair, and require `n > 16`. | `tests/max_endpoints_test.sh` |
 | `c4b-sockxfer` | `c4b-sockxfer` | Exercise IPC transfer of a UDP socket handle. | `tests/ipc_socket_transfer_test.sh` |
 | `shmringprobe` | `shmringprobe` | Create a full-duplex shared-memory ring channel, fork, and round-trip records between parent and child over the mapped pages with no per-record syscall (LA3 data path). | `tests/shmring_test.sh` (`make shmring-test`, `-smp 4`) |
 | `drvsvcdemo` | `drvsvcdemo` | Exercise restartable driver-service supervision plus opaque device-handle handoff, virtio-input discovery metadata, and the withheld-authority envelope over endpoint IPC. | `make c5-device-authority-test` (`-smp 4`) |

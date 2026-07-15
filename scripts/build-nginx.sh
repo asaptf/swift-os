@@ -101,7 +101,22 @@ if [[ ! -f "$OVERLAY/crossbuild-machine.patch" ]]; then
     fail 2 "missing nginx swift-os overlay: $OVERLAY"
 fi
 
-if ! grep -q 'swift-os crossbuild machine overlay' "$SRC/configure"; then
+# Overlay markers: configure machine parse + aarch64-host hang fix (do not
+# execute freestanding autotest binaries).  If an older partial overlay is
+# present, re-extract sources and re-apply so CI does not hang on endianness.
+overlay_ok=0
+if grep -q 'swift-os crossbuild machine overlay' "$SRC/configure" 2>/dev/null \
+    && grep -q 'Freestanding aarch64-elf binaries are loadable' "$SRC/auto/endianness" 2>/dev/null \
+    && grep -q 'Do not execute freestanding guest binaries' "$SRC/auto/feature" 2>/dev/null; then
+    overlay_ok=1
+fi
+
+if [[ "$overlay_ok" -eq 0 ]]; then
+    if grep -q 'swift-os crossbuild machine overlay' "$SRC/configure" 2>/dev/null; then
+        log "Refreshing nginx source (stale crossbuild overlay)"
+        rm -rf "$SRC"
+        run tar -xzf "$TARBALL" -C "$WORK"
+    fi
     log "Applying swift-os crossbuild overlay"
     (cd "$SRC" && patch -p1 <"$OVERLAY/crossbuild-machine.patch") >>"$LOG" 2>&1
     code=$?
