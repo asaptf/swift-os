@@ -84,6 +84,13 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
+# console-login prints shell ready then execs the login shell; wait for both so
+# typed commands are not delivered mid-handoff (race widened as boot grew more
+# supervised services before the serial shell is ready to read).
+await "M12c: shell ready" 120 || drive_fail "shell ready marker missing after login"
+await "M11d: exec loaded from disk /bin/busybox" 60 ||
+  drive_fail "login shell was not exec'd after shell ready"
+sleep 0.3
 
 send_line '/bin/logtail 8'
 await "logtail: permission denied (need capLogExport)" 60 ||
