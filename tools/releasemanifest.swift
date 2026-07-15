@@ -117,10 +117,11 @@ private func writeWholeFile(_ path: String, _ bytes: [UInt8]) -> Bool {
 }
 
 private func fileSize(_ path: String) -> Int64? {
-    path.withCString { p in
+    path.withCString { (p) -> Int64? in
         var st = stat()
         guard stat(p, &st) == 0 else { return nil }
-        return st.st_size
+        // Linux st_size is off_t; cast so the closure type is consistently Int64?.
+        return Int64(st.st_size)
     }
 }
 
