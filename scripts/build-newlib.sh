@@ -13,15 +13,41 @@ VERSION="${NEWLIB_VERSION:-4.6.0.20260123}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SYSROOT="$ROOT/sysroot"
 WORK="${TMPDIR:-/tmp}/swiftos-newlib"
-URL="https://sourceware.org/pub/newlib/newlib-${VERSION}.tar.gz"
+# Primary + mirror: sourceware is occasionally unreachable from GitHub runners.
+URLS=(
+    "https://sourceware.org/pub/newlib/newlib-${VERSION}.tar.gz"
+    "https://mirrors.kernel.org/sourceware/newlib/newlib-${VERSION}.tar.gz"
+)
+
+# Fast path when CI cache restored a complete sysroot (or a prior local build).
+if [[ -f "$SYSROOT/aarch64-elf/lib/libc.a" && "${NEWLIB_FORCE:-0}" != "1" ]]; then
+    echo "newlib already installed at $SYSROOT/aarch64-elf (set NEWLIB_FORCE=1 to rebuild)"
+    ls -la "$SYSROOT/aarch64-elf/lib/libc.a"
+    exit 0
+fi
 
 mkdir -p "$WORK"
 cd "$WORK"
 
 if [[ ! -d "newlib-${VERSION}" ]]; then
-    echo "Fetching $URL ..."
-    curl -fsSL -o "newlib-${VERSION}.tar.gz" "$URL"
-    tar xzf "newlib-${VERSION}.tar.gz"
+    tarball="newlib-${VERSION}.tar.gz"
+    fetched=0
+    for URL in "${URLS[@]}"; do
+        echo "Fetching $URL ..."
+        if curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors \
+            --connect-timeout 30 --max-time 600 \
+            -o "$tarball" "$URL"; then
+            fetched=1
+            break
+        fi
+        echo "warn: fetch failed for $URL" >&2
+        rm -f "$tarball"
+    done
+    if [[ "$fetched" -ne 1 ]]; then
+        echo "FAIL: could not download newlib ${VERSION} from any mirror" >&2
+        exit 28
+    fi
+    tar xzf "$tarball"
 fi
 
 rm -rf build && mkdir build && cd build

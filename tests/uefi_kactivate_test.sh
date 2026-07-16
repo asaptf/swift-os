@@ -15,11 +15,13 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 DISK_IMG="$ROOT/build/swift-os.img"
 BASE="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
-AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
-MDIR="${MDIR:-/opt/homebrew/bin/mdir}"
+AAVMF_CODE="$(host_aavmf_code)" || true
+MDIR="$(host_tool mdir "${MDIR:-}")" || true
 PART_OFFSET=$((2048 * 512))
 
 [[ -f "$AAVMF_CODE" ]] || { echo "FAIL: AAVMF firmware missing at $AAVMF_CODE" >&2; exit 2; }

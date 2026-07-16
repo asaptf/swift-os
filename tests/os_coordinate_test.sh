@@ -21,6 +21,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 KERNELBOOT="$ROOT/build/kernelboot"
 KERNEL_BIN="$ROOT/build/kernel.bin"
 # OS-1c: ESP kernel slots are padded to a fixed size; a rebuilt manifest must sign
@@ -30,8 +32,8 @@ USTORE="$ROOT/build/updatestore"
 BASE="$ROOT/build/base.img"
 SIGN_SEED="$ROOT/models/dev-image-signing.seed"
 QEMU="${QEMU:-qemu-system-aarch64}"
-AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
-MCOPY="${MCOPY:-/opt/homebrew/bin/mcopy}"
+AAVMF_CODE="$(host_aavmf_code)" || true
+MCOPY="$(host_tool mcopy "${MCOPY:-}")" || true
 PART_OFFSET=$((2048 * 512))
 
 [[ -f "$AAVMF_CODE" ]] || { echo "SKIP: AAVMF firmware missing at $AAVMF_CODE" >&2; exit 0; }

@@ -21,13 +21,15 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 BASE="$ROOT/build/base.img"
 USTORE="$ROOT/build/updatestore"
 KERNEL_SLOT="$ROOT/build/kernel-slot.bin"        # original (active) slot image
 NEW_KERNEL="$ROOT/build/kinstall-newkernel.bin"  # the bundle's distinct kernel
 QEMU="${QEMU:-qemu-system-aarch64}"
-AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
-MCOPY="${MCOPY:-/opt/homebrew/bin/mcopy}"
+AAVMF_CODE="$(host_aavmf_code)" || true
+MCOPY="$(host_tool mcopy "${MCOPY:-}")" || true
 PART_OFFSET=$((2048 * 512))
 BUNDLE=/usr/share/swos-kinstall-test/os.swsys
 

@@ -23,12 +23,15 @@ PACKAGES=(
     clang
     curl
     device-tree-compiler   # dtc
+    gdisk                    # sgdisk — GPT for make disk / UEFI tests
     git
     libssl-dev             # openssl headers for native tools
     lld
     llvm
+    mtools                   # mformat/mcopy/mdir — ESP population (no root mount)
     perl
     python3
+    qemu-efi-aarch64         # AAVMF firmware for UEFI boot tests
     qemu-system-aarch64
     qemu-system-arm
     ipxe-qemu                # /usr/share/qemu/efi-virtio.rom for virt DTB dump + NIC boot

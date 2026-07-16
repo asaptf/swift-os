@@ -20,11 +20,13 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 KERNEL_BIN="$ROOT/build/kernel.bin"
 USTORE="$ROOT/build/updatestore"
 BASE="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
-AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
+AAVMF_CODE="$(host_aavmf_code)" || true
 BUNDLE="/usr/share/swupdate-test/os.swsys"
 
 [[ -f "$AAVMF_CODE" ]] || { echo "SKIP: AAVMF firmware missing at $AAVMF_CODE" >&2; exit 0; }

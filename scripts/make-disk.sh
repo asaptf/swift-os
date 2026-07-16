@@ -9,6 +9,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 BUILD="$ROOT/build"
 EFI_APP="$BUILD/BOOTAA64.EFI"
 KERNEL_BIN="$BUILD/kernel.bin"
@@ -18,19 +20,22 @@ SIZE_MB="${DISK_MB:-96}"
 PART_START_SECTOR=2048
 PART_OFFSET=$((PART_START_SECTOR * 512))
 
-SGDISK="${SGDISK:-/opt/homebrew/bin/sgdisk}"
-MFORMAT="${MFORMAT:-/opt/homebrew/bin/mformat}"
-MMD="${MMD:-/opt/homebrew/bin/mmd}"
-MCOPY="${MCOPY:-/opt/homebrew/bin/mcopy}"
-MDIR="${MDIR:-/opt/homebrew/bin/mdir}"
+# gptfdisk (sgdisk) + mtools — Homebrew on macOS, apt gdisk/mtools on Linux CI.
+SGDISK="$(host_tool sgdisk "${SGDISK:-}")" \
+    || { echo "make-disk: missing sgdisk (install gptfdisk/gdisk)" >&2; exit 2; }
+MFORMAT="$(host_tool mformat "${MFORMAT:-}")" \
+    || { echo "make-disk: missing mformat (install mtools)" >&2; exit 2; }
+MMD="$(host_tool mmd "${MMD:-}")" \
+    || { echo "make-disk: missing mmd (install mtools)" >&2; exit 2; }
+MCOPY="$(host_tool mcopy "${MCOPY:-}")" \
+    || { echo "make-disk: missing mcopy (install mtools)" >&2; exit 2; }
+MDIR="$(host_tool mdir "${MDIR:-}")" \
+    || { echo "make-disk: missing mdir (install mtools)" >&2; exit 2; }
 
 [[ -f "$EFI_APP" ]] || { echo "make-disk: $EFI_APP missing - run 'make uefi' first" >&2; exit 2; }
 [[ -f "$KERNEL_BIN" ]] || { echo "make-disk: $KERNEL_BIN missing - run 'make build' first" >&2; exit 2; }
 for f in kernelA.bin kernelB.bin kernel-boot; do
     [[ -f "$ESP_SRC/$f" ]] || { echo "make-disk: $ESP_SRC/$f missing - run 'make uefi' first" >&2; exit 2; }
-done
-for tool in "$SGDISK" "$MFORMAT" "$MMD" "$MCOPY" "$MDIR"; do
-    [[ -x "$tool" ]] || { echo "make-disk: missing executable $tool" >&2; exit 2; }
 done
 
 echo "make-disk: creating ${SIZE_MB}MiB image at $IMG"

@@ -16,6 +16,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 DISK_IMG="$ROOT/build/swift-os.img"
 KERNELBOOT="$ROOT/build/kernelboot"
 KERNEL_BIN="$ROOT/build/kernel.bin"
@@ -24,9 +26,9 @@ KERNEL_BIN="$ROOT/build/kernel.bin"
 KERNEL_SLOT="$ROOT/build/kernel-slot.bin"
 SIGN_SEED="$ROOT/models/dev-image-signing.seed"
 QEMU="${QEMU:-qemu-system-aarch64}"
-AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
-MCOPY="${MCOPY:-/opt/homebrew/bin/mcopy}"
-MDEL="${MDEL:-/opt/homebrew/bin/mdel}"
+AAVMF_CODE="$(host_aavmf_code)" || true
+MCOPY="$(host_tool mcopy "${MCOPY:-}")" || true
+MDEL="$(host_tool mdel "${MDEL:-}")" || true
 PART_OFFSET=$((2048 * 512))
 
 [[ -f "$AAVMF_CODE" ]] || { echo "FAIL: AAVMF firmware missing at $AAVMF_CODE" >&2; exit 2; }

@@ -18,9 +18,11 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 QEMU="${QEMU:-qemu-system-aarch64}"
 SSH="${SSH:-ssh}"
-AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
+AAVMF_CODE="$(host_aavmf_code)" || true
 DISK_IMG="$ROOT/build/swift-os.img"
 STORE_IMG="$ROOT/build/hetzner-update-store.img"
 SSHKEY="${SSHKEY:-$ROOT/build/sshkey}"

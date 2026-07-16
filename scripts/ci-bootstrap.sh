@@ -52,13 +52,23 @@ echo "==> ci-bootstrap: toolchain check"
 command -v aarch64-elf-gcc >/dev/null
 aarch64-elf-gcc --version | head -1
 
-echo "==> ci-bootstrap: make newlib"
-make -C "$ROOT" newlib \
-    NEWLIB_VERSION="$NEWLIB_VERSION"
+# Skip rebuilds when Actions cache restored sysroot / busybox.elf — avoids a
+# fragile sourceware.org fetch on every job when the artifact is already good.
+if [[ -f "$ROOT/sysroot/aarch64-elf/lib/libc.a" ]]; then
+    echo "==> ci-bootstrap: newlib already present (sysroot), skipping"
+else
+    echo "==> ci-bootstrap: make newlib"
+    make -C "$ROOT" newlib \
+        NEWLIB_VERSION="$NEWLIB_VERSION"
+fi
 
-echo "==> ci-bootstrap: make busybox"
-make -C "$ROOT" busybox \
-    BUSYBOX_VERSION="$BUSYBOX_VERSION"
+if [[ -f "$ROOT/build/busybox.elf" ]]; then
+    echo "==> ci-bootstrap: busybox.elf already present, skipping"
+else
+    echo "==> ci-bootstrap: make busybox"
+    make -C "$ROOT" busybox \
+        BUSYBOX_VERSION="$BUSYBOX_VERSION"
+fi
 
 echo "==> ci-bootstrap: fetch test models"
 "$ROOT/scripts/fetch-model.sh"

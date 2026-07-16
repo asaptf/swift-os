@@ -10,11 +10,13 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 ESP_DIR="$ROOT/build/esp"
 EFI_APP="$ESP_DIR/EFI/BOOT/BOOTAA64.EFI"
 DISK_IMG="$ROOT/build/swift-os.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
-AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
+AAVMF_CODE="$(host_aavmf_code)" || true
 UEFI_BOOT="${UEFI_BOOT:-disk}"
 SMP_CPUS="${SMP_CPUS:-1}"
 

@@ -13,9 +13,12 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 DISK="$ROOT/build/swift-os.img"
 BASE="$ROOT/build/base.img"
-AAVMF="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
+AAVMF="$(host_aavmf_code)" || true
+AAVMF_CODE="$AAVMF"
 QEMU="${QEMU:-qemu-system-aarch64}"
 [[ -f "$DISK" ]]  || { echo "FAIL: $DISK missing (make disk)" >&2; exit 2; }
 [[ -f "$BASE" ]]  || { echo "FAIL: $BASE missing (make base-image)" >&2; exit 2; }

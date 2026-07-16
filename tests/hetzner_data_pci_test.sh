@@ -14,6 +14,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 DISK_IMG="$ROOT/build/swift-os.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 SSH="${SSH:-ssh}"
@@ -21,7 +23,7 @@ SSHKEY="${SSHKEY:-$ROOT/build/sshkey}"
 LOGINKEY="${LOGINKEY:-$ROOT/fixtures/ssh/sshd_hc5_ed25519}"
 HOST_SEED="${HOST_SEED:-$ROOT/base/etc/ssh/ssh_host_ed25519_seed}"
 HOST_PORT="${SSHD_HOST_PORT:-$((36000 + ($$ % 8000)))}"
-AAVMF_CODE="${AAVMF_CODE:-/opt/homebrew/share/qemu/edk2-aarch64-code.fd}"
+AAVMF_CODE="$(host_aavmf_code)" || true
 
 PERSISTMARK="swiftos-HZ-DATA-PCI-8k3m"
 
