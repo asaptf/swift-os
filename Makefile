@@ -608,6 +608,7 @@ USER_REBOOT_ELF := $(BUILD)/reboot.elf
 USER_SHUTDOWN_ELF := $(BUILD)/shutdown.elf
 USER_LOGTAIL_ELF := $(BUILD)/logtail.elf
 USER_LOGTAILPROBE_ELF := $(BUILD)/logtail-probe.elf
+USER_TLSTSPROBE_ELF := $(BUILD)/tls-ts-probe.elf
 USER_SWOSCONFIRM_ELF := $(BUILD)/swos-confirm.elf
 USER_SWOSACTIVATE_ELF := $(BUILD)/swos-activate.elf
 USER_SWOSUPDATE_ELF := $(BUILD)/swos-update.elf
@@ -705,6 +706,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SHUTDOWN_ELF) \
 	$(USER_LOGTAIL_ELF) \
 	$(USER_LOGTAILPROBE_ELF) \
+	$(USER_TLSTSPROBE_ELF) \
 	$(USER_SWOSCONFIRM_ELF) \
 	$(USER_SWOSACTIVATE_ELF) \
 	$(USER_SWOSUPDATE_ELF) \
@@ -1116,6 +1118,9 @@ $(BUILD)/user_logtail.o: userland/logtail.swift userland/lib/swift_user.h Makefi
 
 $(BUILD)/user_logtail_probe.o: userland/logtail-probe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/logtail-probe.swift -o $@
+
+$(BUILD)/user_tls_ts_probe.o: userland/tls-ts-probe.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/tls-ts-probe.swift -o $@
 
 $(BUILD)/user_reboot.o: userland/reboot.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/reboot.swift -o $@
@@ -1531,6 +1536,9 @@ $(USER_LOGTAIL_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/us
 
 $(USER_LOGTAILPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_logtail_probe.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_logtail_probe.o -o $@
+
+$(USER_TLSTSPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tls_ts_probe.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_tls_ts_probe.o -o $@
 
 $(USER_REBOOT_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_reboot.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_reboot.o -o $@
@@ -4167,6 +4175,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp -R base/. $(BASE_ROOT)/
 	if [ -n "$(SWOS_PASSWD_FILE)" ]; then cp "$(SWOS_PASSWD_FILE)" $(BASE_ROOT)/etc/swos/passwd; fi
 	if [ -n "$(ROOT_LOGIN_SHELL)" ]; then perl -i -pe 's{^(root(?::[^:]*){4}:).*$$}{$${1}$(ROOT_LOGIN_SHELL)}' $(BASE_ROOT)/etc/swos/passwd; fi
+	if [ -n "$(TLS_TS_CA_PEM)" ]; then mkdir -p $(BASE_ROOT)/etc/ssl; cp "$(TLS_TS_CA_PEM)" $(BASE_ROOT)/etc/ssl/test-ca.pem; fi
 	if [ -n "$(SSHD_HOST_SEED_FILE)" ]; then cp "$(SSHD_HOST_SEED_FILE)" $(BASE_ROOT)/etc/ssh/ssh_host_ed25519_seed; fi
 	if [ -n "$(SSHD_KEX_SEED_FILE)" ]; then cp "$(SSHD_KEX_SEED_FILE)" $(BASE_ROOT)/etc/ssh/ssh_kex_seed; fi
 	if [ -n "$(SSHD_AUTHORIZED_KEYS_FILE)" ]; then cp "$(SSHD_AUTHORIZED_KEYS_FILE)" $(BASE_ROOT)/etc/ssh/authorized_keys; fi
@@ -4298,6 +4307,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SHUTDOWN_ELF) $(BASE_ROOT)/bin/shutdown
 	cp $(USER_LOGTAIL_ELF) $(BASE_ROOT)/bin/logtail
 	cp $(USER_LOGTAILPROBE_ELF) $(BASE_ROOT)/bin/logtail-probe
+	cp $(USER_TLSTSPROBE_ELF) $(BASE_ROOT)/bin/tls-ts-probe
 	cp $(USER_SWOSCONFIRM_ELF) $(BASE_ROOT)/bin/swos-confirm
 	cp $(USER_SWOSACTIVATE_ELF) $(BASE_ROOT)/bin/swos-activate
 	cp $(USER_SWOSUPDATE_ELF) $(BASE_ROOT)/bin/swos-update
