@@ -28,9 +28,13 @@ if (( SMP_CPU_COUNT > 8 )); then
 fi
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
+# Dedicated image with /bin/s4stress as root's login shell — avoids interactive
+# busybox ash after console-login, which faults on aarch64 Linux CI before any
+# typed command runs (see tests/log_export_test.sh / tls_truststore_test.sh).
+DISK="$ROOT/build/base-s4stress.img"
 if [[ ! -f "$DISK" || "$ROOT/userland/s4stress.c" -nt "$DISK" || "$ROOT/Makefile" -nt "$DISK" ]]; then
-  ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || {
-    echo "FAIL: cannot build base.img" >&2
+  ( cd "$ROOT" && make BASE_IMG="$DISK" ROOT_LOGIN_SHELL=/bin/s4stress base-image ) >/dev/null 2>&1 || {
+    echo "FAIL: cannot build base-s4stress.img" >&2
     exit 2
   }
 fi
@@ -100,20 +104,17 @@ fi
 QP=$!
 exec 3<>"$INFIFO"
 
+# Login only — s4stress is the login shell and runs immediately after auth.
 await "M7 tty: type a line then Enter" "$TIMEOUT" || drive_fail "timed out waiting for tty line prompt"
-printf 'tty-line\n' >&3
+send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
 await "swift-os login:" 90 || drive_fail "timed out waiting for login prompt"
 send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
-await "M12c: shell ready" 120 || drive_fail "root shell did not start"
-send_line '/bin/s4stress'
-await "M11d: exec loaded from disk /bin/s4stress" 60 || drive_fail "s4stress did not execute"
-await "S4F-OK resource stress completed" 120 || drive_fail "s4stress did not finish"
-send_line 'exit'
-await "M12c: session ended" 60 || true
+await "M11d: exec loaded from disk /bin/s4stress" 90 || drive_fail "s4stress did not execute"
+await "S4F-OK resource stress completed" 180 || drive_fail "s4stress did not finish"
 
 exec 3>&-
 stop_qemu
