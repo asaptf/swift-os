@@ -617,7 +617,8 @@ for needle in \
   fi
 done
 
-if ! grep -q 'if !pkgStoreBeginMutation() { return -11 }' "$PKG_SWIFT" ||
+# Writer gating returns Errno.again (was a bare -11 before Errno consolidation).
+if ! grep -Eq 'if !pkgStoreBeginMutation\(\) \{ return (Errno\.again\.code|-11) \}' "$PKG_SWIFT" ||
    ! grep -q 'defer { pkgStoreEndMutation() }' "$PKG_SWIFT" ||
    ! grep -q 'let reserved = pkgReserveRecord(dataSize:' "$PKG_SWIFT" ||
    ! grep -q 'pkgCommitRecordNext(reserved.next)' "$PKG_SWIFT" ||
