@@ -62,8 +62,10 @@ dtb_args=(); [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00
 await(){ local m="$1" mx="${2:-30}" n=0; while ((n<mx*10)); do grep -qF "$m" "$LOG" 2>/dev/null && return 0; sleep 0.1; n=$((n+1)); done; return 1; }
 await_count(){ local m="$1" want="$2" mx="${3:-30}" n=0 got; while ((n<mx*10)); do got="$(sed 's/\r//' "$LOG" 2>/dev/null|grep -cF "$m"||true)"; ((got>=want)) && return 0; sleep 0.1; n=$((n+1)); done; return 1; }
 require_await(){ await "$1" "$2" || { echo "FAIL: timeout: $1" >&2; sed 's/\r//' "$LOG"|tail -60 >&2; exit 1; }; }
-send_line(){ local l="$1" d="${TLS_TS_CHAR_DELAY:-0.008}" i; for ((i=0;i<${#l};i++)); do printf '%s' "${l:i:1}" >&3; sleep "$d"; done; printf '\n' >&3; sleep "${TLS_TS_SEND_DELAY:-0.06}"; }
-paste_pem(){ send_line "cat > $1 <<'PEMEOF'"; while IFS= read -r ln; do send_line "$ln"; done < "$2"; send_line "PEMEOF"; }
+# CI runners are slower than local Mac; pace serial input so ash never drops
+# characters mid-command (empty tlsget output is the usual symptom).
+send_line(){ local l="$1" d="${TLS_TS_CHAR_DELAY:-0.02}" i; for ((i=0;i<${#l};i++)); do printf '%s' "${l:i:1}" >&3; sleep "$d"; done; printf '\n' >&3; sleep "${TLS_TS_SEND_DELAY:-0.12}"; }
+paste_pem(){ send_line "cat > $1 <<'PEMEOF'"; while IFS= read -r ln; do send_line "$ln"; done < "$2"; send_line "PEMEOF"; sleep 0.3; }
 
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false "${dtb_args[@]}" \
@@ -75,31 +77,39 @@ require_await "M7 tty: type a line then Enter" 60; send_line 'tty-line'
 require_await "M7 tty: running; press Ctrl-C" 40; printf '\003' >&3
 require_await "swift-os login:" 40; send_line 'root'
 require_await "Password:" 30; send_line 'swordfish'
-require_await "M12c: shell ready" 60
+require_await "M12c: shell ready" 90
+# Prove the interactive shell is accepting commands before the long PEM paste.
+send_line "echo TLS-TS-SHELL-READY"
+require_await "TLS-TS-SHELL-READY" 30
 
 paste_pem /tmp/testca.pem "$W/ca.pem"
+send_line "echo TLS-TS-CA-STAGED"
+require_await "TLS-TS-CA-STAGED" 30
 
-# A) Default: system trust store (2 ISRG roots) — the test leaf does not chain to
-#    them, so verification rejects the server.
+# A) Default: system trust store (ISRG roots in /etc/ssl/cert.pem) — the test
+#    leaf does not chain to them, so verification rejects the server.
 send_line "/bin/tlsget 10.0.2.2 $PORT 10.0.2.2"
-await "verifying against 2 trust root(s)" 40 || true
-await "handshake failed" 40 || true
+await "verifying against " 60 || true
+await "handshake failed" 60 || true
 
 # B) Trust the test CA explicitly: chain + SAN + validity all pass.
 send_line "/bin/tlsget --cafile /tmp/testca.pem 10.0.2.2 $PORT 10.0.2.2"
-await "verifying against 1 trust root(s)" 40 || true
-await "handshake complete" 40 || true
+await "verifying against 1 trust root(s)" 60 || true
+await "handshake complete" 60 || true
 
 # C) Insecure: verification skipped.
 send_line "/bin/tlsget --insecure 10.0.2.2 $PORT 10.0.2.2"
-await "insecure mode" 40 || true
-await_count "handshake complete" 2 40 || true
+await "insecure mode" 60 || true
+await_count "handshake complete" 2 60 || true
 
 exec 3>&-; stop_all; QP=""; SPID=""
 
 clean="$(sed 's/\r//' "$LOG")"; ok=1
 fail(){ echo "FAIL: $1" >&2; ok=0; }
-grep -qF "verifying against 2 trust root(s)" <<<"$clean" || fail "system trust store (2 ISRG roots) did not load by default"
+# Accept any positive root count (base ships 2 ISRG roots; fuller Mozilla bundles
+# are also fine as long as verify is on by default).
+grep -Eq 'verifying against [1-9][0-9]* trust root\(s\)' <<<"$clean" \
+  || fail "system trust store did not load by default"
 grep -qF "handshake failed" <<<"$clean"               || fail "default verify did NOT reject a leaf outside the system store"
 grep -qF "verifying against 1 trust root(s)" <<<"$clean" || fail "--cafile did not load the test root"
 [[ "$(grep -cF 'handshake complete' <<<"$clean")" -ge 2 ]] || fail "verified (--cafile) and/or insecure handshake did not complete"
@@ -109,5 +119,6 @@ if [[ "$ok" -eq 1 ]]; then
   echo "PASS: /bin/tlsget verifies by default against the system trust store; --cafile and --insecure work"
   exit 0
 fi
+echo "--- serial tail ---" >&2; tail -80 <<<"$clean" >&2
 echo "--- tlsget region ---" >&2; sed -n '/tlsget:/,$p' <<<"$clean" | head -40 >&2
 exit 1
