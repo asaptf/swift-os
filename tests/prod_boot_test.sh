@@ -38,11 +38,15 @@ if [[ ! -f "$DTB" ]]; then
 fi
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
-"$QEMU" -M virt -cpu cortex-a72 -m 512M -nographic -no-reboot \
+# virtio-gpu (display none): production/headless path. Without a GPU scanout the
+# kernel runs the pure-serial demo sequence and blocks forever in /bin/ttydemo
+# waiting for a line that never arrives — swos-init would never start.
+"$QEMU" -M virt -cpu cortex-a72 -m 512M -display none -no-reboot \
   -global virtio-mmio.force-legacy=false \
   "${dtb_args[@]}" \
   -drive "file=$BASE_IMG,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
+  -device virtio-gpu-device \
   -netdev user,id=net0,hostfwd=tcp::18080-:8080 \
   -device virtio-net-device,netdev=net0 \
   -kernel "$KERNEL" -serial "file:$LOG" -pidfile "$PIDFILE" & QP=$!
@@ -63,6 +67,7 @@ dump_tail() {
 }
 
 EXPECT=(
+  "virtio-gpu: scanout console active"
   "swos-init: started nginx"
   "swos-init: started sshd"
   "swos-init: started inputd"
