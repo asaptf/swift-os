@@ -34,6 +34,7 @@ PACKAGES=(
     perl
     python3
     qemu-efi-aarch64         # AAVMF firmware for UEFI boot tests
+    ripgrep                  # rg — used by smp_release_guard_test and friends
     # qemu-system-arm ships the qemu-system-aarch64 binary; the
     # "qemu-system-aarch64" name is a virtual package on Ubuntu and never
     # shows as dpkg-installed on its own.

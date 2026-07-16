@@ -143,15 +143,17 @@ for needle in \
   fi
 done
 
+# Per-process scheduler tables are growable heap pointers (processGrowTable),
+# not fixed Swift Array storage. Match the current process.swift layout.
 for needle in \
-  'private var pHomeCpu = \[UInt32\]' \
-  'private var pRunNext = \[Int32\]' \
-  'private var pRunQueued = \[Bool\]' \
-  'private var pLastDispatchCpu = \[UInt32\]' \
-  'private var pDispatchCount = \[UInt64\]' \
-  'private var pDispatchCpuMask = \[UInt64\]' \
-  'private var pAddressSpaceCpuMask = \[UInt64\]' \
-  'private var pSchedulerQuiesced = \[Bool\]' \
+  'private var pHomeCpu: UnsafeMutablePointer<UInt32>! = nil' \
+  'private var pRunNext: UnsafeMutablePointer<Int32>! = nil' \
+  'private var pRunQueued: UnsafeMutablePointer<Bool>! = nil' \
+  'private var pLastDispatchCpu: UnsafeMutablePointer<UInt32>! = nil' \
+  'private var pDispatchCount: UnsafeMutablePointer<UInt64>! = nil' \
+  'private var pDispatchCpuMask: UnsafeMutablePointer<UInt64>! = nil' \
+  'private var pAddressSpaceCpuMask: UnsafeMutablePointer<UInt64>! = nil' \
+  'private var pSchedulerQuiesced: UnsafeMutablePointer<Bool>! = nil' \
   'private var processRunQueueHead = \[Int32\]' \
   'private var processRunQueueTail = \[Int32\]' \
   'private var processRunQueueEnqueueCount = \[UInt64\]' \
