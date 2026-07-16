@@ -92,8 +92,11 @@ for cpu in "${cpus[@]}"; do
     "QEMU virt -smp $cpu_count GIC node should be an interrupt controller."
 
   timer_flags="$(printf '0x%x' "$(((((1 << cpu_count) - 1) << 8) | 4))")"
-  require_fixed "$dts" 'compatible = "arm,armv8-timer", "arm,armv7-timer";' \
-    "QEMU virt -smp $cpu_count generic timer compatible changed."
+  # dtc multi-string formatting differs by version (comma-separated vs \0-escaped).
+  require_fixed "$dts" 'arm,armv8-timer' \
+    "QEMU virt -smp $cpu_count generic timer compatible missing arm,armv8-timer."
+  require_fixed "$dts" 'arm,armv7-timer' \
+    "QEMU virt -smp $cpu_count generic timer compatible missing arm,armv7-timer."
   require_fixed "$dts" "interrupts = <0x01 0x0d $timer_flags 0x01 0x0e $timer_flags" \
     "QEMU virt -smp $cpu_count timer PPI flags should include physical INTID 30 with $timer_flags."
 

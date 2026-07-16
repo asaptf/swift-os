@@ -47,8 +47,16 @@ for cpu in "${cpus[@]}"; do
     sed -n '/^[[:space:]]*timer {/,/^[[:space:]]*};/p' |
     tr '\n' ' ')"
   flags="$(printf '0x%x' "$(((((1 << cpu) - 1) << 8) | 4))")"
-  if [[ "$timer" != *'compatible = "arm,armv8-timer", "arm,armv7-timer"'* ]]; then
+  # dtc versions differ on multi-string props: macOS/homebrew emits
+  #   "arm,armv8-timer", "arm,armv7-timer"
+  # while Ubuntu dtc often emits a single C-escaped string with \0.
+  if [[ "$timer" != *'arm,armv8-timer'* ]]; then
     echo "FAIL: DTB timer node for -smp $cpu does not advertise arm,armv8-timer." >&2
+    echo "$timer" >&2
+    exit 1
+  fi
+  if [[ "$timer" != *'arm,armv7-timer'* ]]; then
+    echo "FAIL: DTB timer node for -smp $cpu does not advertise arm,armv7-timer." >&2
     echo "$timer" >&2
     exit 1
   fi
