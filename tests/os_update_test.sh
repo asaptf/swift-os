@@ -23,6 +23,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 BASE="$ROOT/build/base.img"
@@ -32,7 +34,7 @@ FIXTURE="$ROOT/build/test-base.img"
 KSLOT="$ROOT/build/kernel-slot.bin"   # OS-1c-3: SWSYS v2 carries the real padded kernel slot
 SEED="$ROOT/models/dev-image-signing.seed"
 QEMU="${QEMU:-qemu-system-aarch64}"
-OPENSSL="${OPENSSL:-/opt/homebrew/opt/openssl@3/bin/openssl}"
+OPENSSL="$(host_tool openssl "${OPENSSL:-}")" || true
 PYTHON="${PYTHON:-python3}"
 TLS_PORT="${TLS_PORT:-$(( (RANDOM % 2000) + 44000 ))}"
 

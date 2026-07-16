@@ -4,6 +4,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 MAKEFILE="$ROOT/Makefile"
 KERNEL="$ROOT/build/kernel.elf"
 BOOT_OBJ="$ROOT/build/boot.o"
@@ -31,7 +33,7 @@ S4_STRESS_C="$ROOT/userland/s4stress.c"
 S4_STRESS_TEST="$ROOT/tests/s4_resource_stress_test.sh"
 SMP_RESOURCE_STRESS_TEST="$ROOT/tests/smp_resource_stress_test.sh"
 SMP_BOOT_TEST="$ROOT/tests/smp_boot_test.sh"
-OBJDUMP="${LLVM_OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}"
+OBJDUMP="$(host_tool llvm-objdump "${LLVM_OBJDUMP:-}")" || true
 
 [[ -x "$OBJDUMP" ]] || { echo "FAIL: llvm-objdump not found at $OBJDUMP" >&2; exit 2; }
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL not found - run 'make build' first." >&2; exit 2; }

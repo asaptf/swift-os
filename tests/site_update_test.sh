@@ -20,6 +20,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 BASE_IMG="$ROOT/build/base.img"
@@ -28,7 +30,7 @@ BAD_BUNDLE="$ROOT/build/site-test-bad.swsite"
 QEMU="${QEMU:-qemu-system-aarch64}"
 SSH="${SSH:-ssh}"
 SSHKEY="${SSHKEY:-$ROOT/build/sshkey}"
-OPENSSL="${OPENSSL:-/opt/homebrew/opt/openssl@3/bin/openssl}"
+OPENSSL="$(host_tool openssl "${OPENSSL:-}")" || true
 PYTHON="${PYTHON:-python3}"
 CONF="/usr/etc/nginx/nginx-prod.conf"
 NEWMARK="SWSITE-BUNDLE-APPLIED-9z4k"

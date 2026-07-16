@@ -13,8 +13,10 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 HOST_SWIFTC="${HOST_SWIFTC:-/usr/bin/swiftc}"
-OPENSSL="${OPENSSL:-/opt/homebrew/opt/openssl@3/bin/openssl}"
+OPENSSL="$(host_tool openssl "${OPENSSL:-}")" || true
 BUILD="$ROOT/build"
 PORT_OK="${TLSV_PORT_OK:-44360}"
 PORT_BAD="${TLSV_PORT_BAD:-44361}"

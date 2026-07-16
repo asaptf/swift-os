@@ -8,8 +8,10 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 ELF="$ROOT/build/hello.elf"
-READELF="${READELF:-/opt/homebrew/opt/llvm/bin/llvm-readelf}"
+READELF="$(host_tool llvm-readelf "${READELF:-}")" || true
 
 if [[ ! -f "$ELF" ]]; then
     echo "FAIL: $ELF not found — run 'make build' first." >&2

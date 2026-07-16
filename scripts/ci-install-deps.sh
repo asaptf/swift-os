@@ -30,6 +30,7 @@ PACKAGES=(
     lld
     llvm
     mtools                   # mformat/mcopy/mdir — ESP population (no root mount)
+    openssl                  # CLI for TLS/ACME host-side test helpers
     perl
     python3
     qemu-efi-aarch64         # AAVMF firmware for UEFI boot tests
@@ -48,8 +49,10 @@ REQUIRED_BINS=(
     curl
     dtc
     ld.lld
+    llvm-objdump
     mcopy
     mformat
+    openssl
     qemu-system-aarch64
     sgdisk
 )

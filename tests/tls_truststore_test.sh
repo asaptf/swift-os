@@ -16,9 +16,11 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 KERNEL="$ROOT/build/kernel.elf"; DTB="$ROOT/build/virt.dtb"; DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
-OPENSSL="${OPENSSL:-/opt/homebrew/opt/openssl@3/bin/openssl}"
+OPENSSL="$(host_tool openssl "${OPENSSL:-}")" || true
 PORT="${TLS_TS_PORT:-44381}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }

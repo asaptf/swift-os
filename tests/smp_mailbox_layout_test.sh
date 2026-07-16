@@ -4,8 +4,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 KERNEL="$ROOT/build/kernel.elf"
-OBJDUMP="${LLVM_OBJDUMP:-/opt/homebrew/opt/llvm/bin/llvm-objdump}"
+OBJDUMP="$(host_tool llvm-objdump "${LLVM_OBJDUMP:-}")" || true
 
 [[ -x "$OBJDUMP" ]] || { echo "FAIL: llvm-objdump not found at $OBJDUMP" >&2; exit 2; }
 if [[ ! -f "$KERNEL" ]]; then

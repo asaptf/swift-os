@@ -26,7 +26,11 @@ host_tool() {
     fi
     for candidate in \
         "/opt/homebrew/bin/$name" \
+        "/opt/homebrew/opt/llvm/bin/$name" \
+        "/opt/homebrew/opt/openssl@3/bin/$name" \
         "/usr/local/bin/$name" \
+        "/usr/lib/llvm-18/bin/$name" \
+        "/usr/lib/llvm-17/bin/$name" \
         "/usr/bin/$name" \
         "/bin/$name" \
         "/usr/sbin/$name" \

@@ -74,6 +74,18 @@ fi
 if [[ -n "$mdel_bin" ]]; then
     lines+=("MDEL=$mdel_bin")
 fi
+objdump_bin="$(host_tool llvm-objdump "${LLVM_OBJDUMP:-}" || true)"
+readelf_bin="$(host_tool llvm-readelf "${READELF:-}" || true)"
+openssl_bin="$(host_tool openssl "${OPENSSL:-}" || true)"
+if [[ -n "$objdump_bin" ]]; then
+    lines+=("LLVM_OBJDUMP=$objdump_bin")
+fi
+if [[ -n "$readelf_bin" ]]; then
+    lines+=("READELF=$readelf_bin")
+fi
+if [[ -n "$openssl_bin" ]]; then
+    lines+=("OPENSSL=$openssl_bin")
+fi
 
 if [[ "${1:-}" == "--print" ]]; then
     for line in "${lines[@]}"; do
