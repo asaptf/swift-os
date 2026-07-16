@@ -1711,6 +1711,7 @@ are not the primary operator interface.
 | `deviceauthdemo` | C5g negative device discovery and claim checks for restricted principals. | Yes, but run it as `guest` or prefer the make target. | `make device-authority-cap-test` |
 | `identitydemo` | Boot principal/session/capability context and fork inheritance of security context. | Yes, for identity diagnostics. | `tests/boot_test.sh`, `tests/base_image_test.swift` |
 | `logtail-probe` | Capability-gate probe for `SYS_LOG_READ` and `SYS_LOG_STATS`: denied without `capLogExport`, then reads after an explicit admin-context grant. | Yes, for log export acceptance only. | `tests/log_export_test.sh` |
+| `tls-ts-probe` | Login-shell driver for the TLS trust-store gate: runs `/bin/tlsget` against a host s_server with the system store, `--cafile`, and `--insecure` (avoids interactive ash after console-login). | Yes, for TLS trust-store acceptance only. | `tests/tls_truststore_test.sh` |
 | `s4stress` | S4f resource churn across mmap, pipes, tmpfs, fork/wait, and spawn under `-smp 4`. | Yes, but prefer the make target. | `make s4-resource-stress-test` |
 | `drvsvcdemo` | C5a-C5f pseudo/virtio-input driver supervisor, discovery metadata, withheld hardware authority, metadata-only grant rights, opaque grant transfer, restart, and reclaim. | Yes, for C5 diagnostics. | `make c5-test` |
 | `drvinputd` | Worker service started by `drvsvcdemo`; validates endpoint and device-grant handoff. | No; it expects endpoint fd arguments from the supervisor. | `make c5-device-authority-test` |
