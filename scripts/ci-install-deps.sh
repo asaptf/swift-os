@@ -57,8 +57,32 @@ REQUIRED_BINS=(
 export DEBIAN_FRONTEND=noninteractive
 
 # GitHub ubuntu-24.04-arm runners intermittently fail apt over IPv6 to
-# ports.ubuntu.com ("Network is unreachable"). Prefer IPv4 for apt.
+# ports.ubuntu.com ("Network is unreachable") and sometimes time out on IPv4.
+# Force IPv4 and fall back to a kernel.org ubuntu-ports mirror when needed.
 APT_OPTS=(-o Acquire::ForceIPv4=true -o Acquire::Retries=5)
+
+# Ordered ubuntu-ports mirrors (arm64 lives under ports, not archive.ubuntu.com).
+PORTS_MIRRORS=(
+    http://ports.ubuntu.com/ubuntu-ports
+    http://mirrors.kernel.org/ubuntu-ports
+    http://mirror.math.princeton.edu/pub/ubuntu-ports
+)
+
+rewrite_ports_mirror() {
+    local mirror="$1"
+    local f
+    shopt -s nullglob
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+        [[ -f "$f" ]] || continue
+        # Rewrite both classic .list and deb822 .sources URI forms.
+        sudo sed -i \
+            -e "s|https\\?://ports\\.ubuntu\\.com/ubuntu-ports|${mirror}|g" \
+            -e "s|https\\?://mirrors\\.kernel\\.org/ubuntu-ports|${mirror}|g" \
+            -e "s|https\\?://mirror\\.math\\.princeton\\.edu/pub/ubuntu-ports|${mirror}|g" \
+            "$f" 2>/dev/null || true
+    done
+    shopt -u nullglob
+}
 
 apt_update() {
     echo "Updating apt indices ..."
@@ -73,18 +97,6 @@ pkg_installed() {
     dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'
 }
 
-missing=()
-for pkg in "${PACKAGES[@]}"; do
-    if ! pkg_installed "$pkg"; then
-        missing+=("$pkg")
-    fi
-done
-
-if [[ ${#missing[@]} -eq 0 ]]; then
-    echo "ci-install-deps: all packages already installed"
-    exit 0
-fi
-
 bins_ok() {
     local b
     for b in "${REQUIRED_BINS[@]}"; do
@@ -95,29 +107,44 @@ bins_ok() {
     return 0
 }
 
-# Retry apt-get update + install: ports.ubuntu.com / IPv6 flakes are common.
-attempts=3
-for attempt in $(seq 1 "$attempts"); do
-    # Refresh the missing list each attempt (partial success is possible).
+missing_packages() {
+    local pkg
     missing=()
     for pkg in "${PACKAGES[@]}"; do
         if ! pkg_installed "$pkg"; then
             missing+=("$pkg")
         fi
     done
+}
 
+missing_packages
+if [[ ${#missing[@]} -eq 0 ]] && bins_ok; then
+    echo "ci-install-deps: all packages already installed"
+    exit 0
+fi
+
+# Up to 2 full passes over the mirror list (each mirror gets a couple tries).
+pass=0
+for mirror in "${PORTS_MIRRORS[@]}" "${PORTS_MIRRORS[@]}"; do
+    pass=$((pass + 1))
+    echo "==> apt mirror [$pass]: $mirror"
+    rewrite_ports_mirror "$mirror"
+
+    missing_packages
     if [[ ${#missing[@]} -eq 0 ]] && bins_ok; then
         echo "ci-install-deps: OK"
         exit 0
     fi
 
     if [[ ${#missing[@]} -gt 0 ]]; then
-        echo "Installing (attempt ${attempt}/${attempts}): ${missing[*]}"
-        if ! apt_update || ! apt_install "${missing[@]}"; then
-            echo "warn: apt install attempt ${attempt} failed" >&2
+        echo "Installing: ${missing[*]}"
+        if ! apt_update; then
+            echo "warn: apt-get update failed for $mirror" >&2
+            continue
         fi
-    else
-        echo "Packages present; checking required binaries (attempt ${attempt}/${attempts})"
+        if ! apt_install "${missing[@]}"; then
+            echo "warn: apt-get install failed for $mirror" >&2
+        fi
     fi
 
     if bins_ok; then
@@ -132,11 +159,8 @@ for attempt in $(seq 1 "$attempts"); do
         fi
     done
     echo "warn: still missing binaries: ${still_bins[*]:-none}" >&2
-
-    if [[ "$attempt" -lt "$attempts" ]]; then
-        sleep $((attempt * 5))
-    fi
+    sleep 3
 done
 
-echo "ci-install-deps: FAILED — required packages/binaries still missing" >&2
+echo "ci-install-deps: FAILED — required packages/binaries still missing after mirror fallbacks" >&2
 exit 100
