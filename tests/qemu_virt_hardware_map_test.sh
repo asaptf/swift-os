@@ -35,6 +35,11 @@ fi
 
 fail() {
   echo "FAIL: $*" >&2
+  if [[ -n "${LAST_DTS:-}" && -f "${LAST_DTS:-}" ]]; then
+    echo "---- relevant DTS excerpt (${LAST_DTS}) ----" >&2
+    grep -nE 'pl011|serial|stdout|intc@|timer|psci|virtio_mmio@a000000|compatible|aliases|chosen' \
+      "$LAST_DTS" 2>/dev/null | head -80 >&2 || true
+  fi
   exit 1
 }
 
@@ -61,6 +66,7 @@ for cpu in "${cpus[@]}"; do
   cpu_count=$((10#$cpu))
   dtb="$BUILD/qemu-virt-hardware-smp-${cpu_count}.dtb"
   dts="$BUILD/qemu-virt-hardware-smp-${cpu_count}.dts"
+  LAST_DTS="$dts"
   tmp="$dtb.tmp.$$"
   rm -f "$tmp"
   "$QEMU" -M "virt,dumpdtb=$tmp" -cpu cortex-a72 -smp "$cpu_count" -m 256M -nographic >/dev/null 2>&1
@@ -69,30 +75,35 @@ for cpu in "${cpus[@]}"; do
   "$FDT_TEST" "$dtb" "$cpu_count" >/dev/null
   "$DTC" -I dtb -O dts "$dtb" >"$dts" 2>/dev/null
 
-  require_fixed "$dts" 'stdout-path = "/pl011@9000000";' \
-    "QEMU virt -smp $cpu_count should route stdout to PL011 @ 0x09000000."
-  require_fixed "$dts" 'serial0 = "/pl011@9000000";' \
-    "QEMU virt -smp $cpu_count should advertise serial0 as PL011 @ 0x09000000."
-  require_fixed "$dts" "pl011@9000000 {" \
-    "QEMU virt -smp $cpu_count missing PL011 node."
-  require_fixed "$dts" 'compatible = "arm,pl011", "arm,primecell";' \
-    "QEMU virt -smp $cpu_count PL011 compatible changed."
+  # Hardware facts (not exact dtc pretty-print). QEMU 8.x vs 11.x and dtc
+  # versions differ on multi-string `compatible` (comma list vs \0-escaped)
+  # and on alias spacing / which aliases are present.
+  require_fixed "$dts" "pl011@9000000" \
+    "QEMU virt -smp $cpu_count missing PL011 node @ 0x09000000."
+  require_fixed "$dts" "arm,pl011" \
+    "QEMU virt -smp $cpu_count PL011 compatible missing arm,pl011."
+  require_fixed "$dts" "arm,primecell" \
+    "QEMU virt -smp $cpu_count PL011 compatible missing arm,primecell."
   require_fixed "$dts" "reg = <0x00 0x9000000 0x00 0x1000>;" \
     "QEMU virt -smp $cpu_count PL011 MMIO range changed."
   require_fixed "$dts" "interrupts = <0x00 0x01 0x04>;" \
     "QEMU virt -smp $cpu_count PL011 interrupt spec changed."
+  # stdout-path and/or serial0 must point at the PL011 (formats vary).
+  if ! grep -Eq 'stdout-path[[:space:]]*=[[:space:]]*"/pl011@9000000"' "$dts" \
+    && ! grep -Eq 'serial0[[:space:]]*=[[:space:]]*"/pl011@9000000"' "$dts"; then
+    fail "QEMU virt -smp $cpu_count should route stdout/serial0 to PL011 @ 0x09000000."
+  fi
 
-  require_fixed "$dts" "intc@8000000 {" \
+  require_fixed "$dts" "intc@8000000" \
     "QEMU virt -smp $cpu_count missing GICv2 node."
-  require_fixed "$dts" 'compatible = "arm,cortex-a15-gic";' \
+  require_fixed "$dts" "arm,cortex-a15-gic" \
     "QEMU virt -smp $cpu_count GIC compatible changed."
   require_fixed "$dts" "reg = <0x00 0x8000000 0x00 0x10000 0x00 0x8010000 0x00 0x10000>;" \
     "QEMU virt -smp $cpu_count GIC distributor/CPU-interface ranges changed."
-  require_regex "$dts" '^[[:space:]]*interrupt-controller;$' \
+  require_regex "$dts" 'interrupt-controller;' \
     "QEMU virt -smp $cpu_count GIC node should be an interrupt controller."
 
   timer_flags="$(printf '0x%x' "$(((((1 << cpu_count) - 1) << 8) | 4))")"
-  # dtc multi-string formatting differs by version (comma-separated vs \0-escaped).
   require_fixed "$dts" 'arm,armv8-timer' \
     "QEMU virt -smp $cpu_count generic timer compatible missing arm,armv8-timer."
   require_fixed "$dts" 'arm,armv7-timer' \
@@ -123,7 +134,7 @@ for cpu in "${cpus[@]}"; do
     irq=$((0x10 + slot))
     base_hex="$(printf '%x' "$base")"
     irq_hex="$(printf '%x' "$irq")"
-    require_fixed "$dts" "virtio_mmio@$base_hex {" \
+    require_fixed "$dts" "virtio_mmio@$base_hex" \
       "QEMU virt -smp $cpu_count missing virtio-mmio slot $slot at 0x$base_hex."
     require_fixed "$dts" "reg = <0x00 0x$base_hex 0x00 0x200>;" \
       "QEMU virt -smp $cpu_count virtio-mmio slot $slot range changed."
