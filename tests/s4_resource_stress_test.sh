@@ -114,7 +114,23 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "M11d: exec loaded from disk /bin/s4stress" 90 || drive_fail "s4stress did not execute"
-await "S4F-OK resource stress completed" 180 || drive_fail "s4stress did not finish"
+# Fail fast on S4F-FAIL instead of waiting the full completion timeout.
+ok_deadline=$(( $(date +%s) + 180 ))
+while true; do
+  if grep -qF "S4F-OK resource stress completed" "$LOG" 2>/dev/null; then
+    break
+  fi
+  if grep -qF "S4F-FAIL" "$LOG" 2>/dev/null; then
+    drive_fail "s4stress reported S4F-FAIL"
+  fi
+  if grep -qF "panic:" "$LOG" 2>/dev/null; then
+    drive_fail "kernel panic during s4stress"
+  fi
+  if (( $(date +%s) >= ok_deadline )); then
+    drive_fail "s4stress did not finish"
+  fi
+  sleep 0.1
+done
 
 exec 3>&-
 stop_qemu

@@ -86,9 +86,42 @@ static void make_dir_path(char *dst, int round) {
     dst[pos] = 0;
 }
 
+static void put_dec(long n) {
+    char buf[24];
+    int i = 0;
+    unsigned long u;
+    if (n < 0) {
+        puts_raw("-");
+        u = (unsigned long)(-(n + 1)) + 1;
+    } else {
+        u = (unsigned long)n;
+    }
+    if (u == 0) {
+        puts_raw("0");
+        return;
+    }
+    while (u > 0 && i < (int)sizeof(buf)) {
+        buf[i++] = (char)('0' + (u % 10));
+        u /= 10;
+    }
+    while (i > 0) {
+        char c[2] = { buf[--i], 0 };
+        puts_raw(c);
+    }
+}
+
 static int fail(const char *msg) {
     puts_raw("S4F-FAIL ");
     puts_raw(msg);
+    puts_raw("\n");
+    return 1;
+}
+
+static int fail_errno(const char *msg, long err) {
+    puts_raw("S4F-FAIL ");
+    puts_raw(msg);
+    puts_raw(" errno=");
+    put_dec(err);
     puts_raw("\n");
     return 1;
 }
@@ -100,12 +133,17 @@ static int tmpfs_fail(const char *msg) {
     return 0;
 }
 
-static int alloc_round(int round) {
-    char *mem = (char *)mmap(0, pageSize, PROT_READ | PROT_WRITE,
-                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (mem == (char *)MAP_FAILED) {
+// Returns 1 on success, 0 on failure. On failure *errOut is a negative errno
+// (mmap/munmap) or a positive sentinel: 1 = content mismatch after write.
+static int alloc_round(int round, long *errOut) {
+    long r = __syscall6(SYS_MMAP, 0, (long)pageSize,
+                        PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (r < 0 && r >= -4095) {
+        if (errOut) *errOut = r;
         return 0;
     }
+    char *mem = (char *)r;
     for (unsigned long i = 0; i < pageSize; i += 257) {
         mem[i] = (char)('A' + ((round + (int)i) % 23));
     }
@@ -113,10 +151,17 @@ static int alloc_round(int round) {
         char want = (char)('A' + ((round + (int)i) % 23));
         if (mem[i] != want) {
             munmap(mem, pageSize);
+            if (errOut) *errOut = 1;
             return 0;
         }
     }
-    return munmap(mem, pageSize) == 0;
+    long ur = __syscall3(SYS_MUNMAP, (long)mem, (long)pageSize, 0);
+    if (ur != 0) {
+        if (errOut) *errOut = ur;
+        return 0;
+    }
+    if (errOut) *errOut = 0;
+    return 1;
 }
 
 static int pipe_round(int round) {
@@ -270,8 +315,9 @@ static int spawn_round(void) {
 int main(void) {
     puts_raw("S4F-START restricted resource stress\n");
     for (int round = 0; round < 16; round += 1) {
-        if (!alloc_round(round)) {
-            return fail("alloc");
+        long aerr = 0;
+        if (!alloc_round(round, &aerr)) {
+            return fail_errno("alloc", aerr);
         }
         if (!pipe_round(round)) {
             return fail("pipe");

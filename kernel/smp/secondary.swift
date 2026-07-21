@@ -153,8 +153,11 @@ func smpTlbShootdownSelfTest() -> Bool {
     let primary = currentCpuId()
     if primary >= smpMaxCpuCount() { return false }
 
+    // Restricted-SMP self-test (S3c): shootdowns must complete while secondaries
+    // still only service IPI work and have not joined the process scheduler.
     let targetMask = smpDiscoveredCpuMaskSkippingPrimary()
-    return smpRequestTlbShootdownForCpuMask(targetMask)
+    if !smpRequestTlbShootdownForCpuMask(targetMask) { return false }
+    return smpSecondariesRemainSchedulerIdle()
 }
 
 func smpPmmStressSelfTest() -> Bool {
@@ -164,6 +167,11 @@ func smpPmmStressSelfTest() -> Bool {
     return pmmFreeCount() == before
 }
 
+/// Production TLB shootdown: ask every remote CPU in `requestedMask` to flush
+/// and wait for ack. Must succeed both under the restricted S2h secondary gate
+/// and after S5g permanently enables multi-CPU EL0 — so this path must NOT
+/// require secondaries to remain scheduler-idle (that is only a pre-S5g
+/// self-test assertion; see `smpTlbShootdownSelfTest`).
 func smpRequestTlbShootdownForCpuMask(_ requestedMask: UInt64) -> Bool {
     let primary = currentCpuId()
     if primary >= smpMaxCpuCount() { return false }
@@ -182,7 +190,8 @@ func smpRequestTlbShootdownForCpuMask(_ requestedMask: UInt64) -> Bool {
         i += 1
     }
     if (requestedMask & ~discoveredMask) != 0 { return false }
-    if targetMask == 0 { return smpSecondariesRemainSchedulerIdle() }
+    // Nothing remote to flush — local TLBI already ran in the caller.
+    if targetMask == 0 { return true }
 
     let generation = smpBeginTlbShootdownProbe(targetMask: targetMask)
     if generation == 0 { return false }
@@ -230,7 +239,7 @@ func smpRequestTlbShootdownForCpuMask(_ requestedMask: UInt64) -> Bool {
                 }
                 i += 1
             }
-            return smpSecondariesRemainSchedulerIdle()
+            return true
         }
     }
     return false
