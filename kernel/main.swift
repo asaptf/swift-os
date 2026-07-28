@@ -1553,13 +1553,23 @@ func kernelMain(_ dtbPhys: UInt, _ fbBase: UInt, _ fbDims: UInt, _ fbStrFmt: UIn
     if interactiveConsole {
         // Interactive graphical session (make run-gfx): boot straight into the
         // shell so the window is immediately usable. The milestone demos still
-        // run on the serial/test path below (and the acceptance tests depend on
-        // them, e.g. the M7 tty demo). Still enable permanent multi-CPU EL0 so
-        // userland threads (LLM workers, etc.) can use every online core.
+        // run on the serial/selftest path below (and the acceptance tests that
+        // opt in with selftest=1 depend on them). Still enable permanent
+        // multi-CPU EL0 so userland threads (LLM workers, etc.) can use every
+        // online core.
         let n = processEnableDefaultMultiCpuEl0()
         klog(.info, "smp", "S5g OK: default multi-CPU EL0 placement enabled", UInt64(n))
         runInit()
+    } else if !bootSelftest {
+        // Default product/serial path: skip the heavy bring-up demos. Keep M7
+        // (load-bearing sync point for ~183 harnesses) and enable multi-CPU EL0
+        // the same way the interactive path does.
+        let n = processEnableDefaultMultiCpuEl0()
+        klog(.info, "smp", "S5g OK: default multi-CPU EL0 placement enabled", UInt64(n))
+        runTtyDemo()
+        runInit() // console-login (init) — interactive, last
     } else {
+        // Opt-in full milestone sequence (FDT /chosen/bootargs selftest=1).
         runSchedulerDemo()
         if !smpS2cNoSecondaryKernelSchedulerExecution() {
             uartPuts("panic: S2c secondary kernel scheduler execution guard failed\n")

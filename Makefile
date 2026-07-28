@@ -2546,6 +2546,7 @@ host-test: docs-test errno-test page-allocator-refcount-lifecycle-test elf-loade
 # P0: CI smoke — build + minimal boot/log acceptance.
 ci-fast: docs-test build $(QEMU_DTB) base-image
 	./tests/boot_test.sh
+	./tests/boot_selftest_skip_test.sh
 	./tests/log_export_test.sh
 
 release-manifest: build base-image $(QEMU_DTB) $(RELEASEMANIFEST)
@@ -2651,6 +2652,8 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/tls_truststore_test.sh
 	./tests/userland_elf_test.sh
 	./tests/boot_test.sh
+	./tests/boot_selftest_skip_test.sh
+	./tests/boot_selftest_optin_test.sh
 	./tests/log_export_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/s4_resource_stress_test.sh

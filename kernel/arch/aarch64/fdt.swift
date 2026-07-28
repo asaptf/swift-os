@@ -309,6 +309,11 @@ func fdtParse(_ base: UnsafePointer<UInt8>) -> PlatformInfo {
 /// device tree). `platformInit` copies it into the kernel-wide `recoveryMode`.
 var fdtRecoveryRequested = false
 
+/// Set by `fdtParseInto` when `/chosen/bootargs` contains `selftest=1`.
+/// Default is off: normal boots skip the heavy pre-login milestone demos.
+/// `platformInit` copies this into the kernel-wide `bootSelftest`.
+var fdtSelftestRequested = false
+
 /// V2c: set by `fdtParseInto` when /chosen/bootargs carries `datafs.root=<hex>` —
 /// the 128-bit UUID that pins which datafs disk serves the root /data tier (the
 /// single pinned identity). High 16 hex = uuidHi, next 16 = uuidLo. `platformInit`
@@ -373,6 +378,7 @@ private func bytesContain(_ val: UnsafePointer<UInt8>, _ len: Int, _ token: Stat
 func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
     info.reset()
     fdtRecoveryRequested = false
+    fdtSelftestRequested = false
     fdtDatafsRootSet = false
     fdtDatafsRootLo = 0
     fdtDatafsRootHi = 0
@@ -481,6 +487,9 @@ func fdtParseInto(_ base: UnsafePointer<UInt8>, _ info: inout PlatformInfo) {
                     if devIsChosen {
                         if cstrEquals(propName, "bootargs") {
                             if bytesContain(valPtr, len, "recovery") { fdtRecoveryRequested = true }
+                            // Opt-in: `selftest=1` restores the full pre-login
+                            // milestone demo sequence (default is skip).
+                            if bytesContain(valPtr, len, "selftest=1") { fdtSelftestRequested = true }
                             fdtParseDatafsRoot(valPtr, len)
                         }
                     }

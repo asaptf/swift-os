@@ -23,6 +23,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+# shellcheck source=tests/lib/bootargs.sh
+source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -32,6 +34,7 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 [[ -f "$DISK" ]]   || { echo "FAIL: $DISK missing (make base-image)" >&2; exit 2; }
 
 LOG="$(mktemp -t swiftos-msec-log.XXXXXX)"
+SELFTEST_DTB=""
 PIDFILE="$(mktemp -t swiftos-msec-pid.XXXXXX)"
 INFIFO="$(mktemp -u -t swiftos-msec-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
@@ -42,10 +45,12 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO" "${SELFTEST_DTB:-}"' EXIT
 
 dtb_args=()
-[[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+SELFTEST_DTB="$(mktemp -t swiftos-selftest.XXXXXX.dtb)"
+bake_selftest_dtb "$DTB" "${SELFTEST_DTB:-}" || exit 2
+[[ -f "${SELFTEST_DTB:-}" ]] && dtb_args=(-device "loader,file=${SELFTEST_DTB:-},addr=0x4FF00000,force-raw=on")
 
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0

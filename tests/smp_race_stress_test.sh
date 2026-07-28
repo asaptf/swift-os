@@ -14,6 +14,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/bootargs.sh
+source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
@@ -43,7 +45,9 @@ if [[ ! -f "$DISK" || "$ROOT/userland/smprace.c" -nt "$DISK" || "$ROOT/Makefile"
 fi
 
 LOG="$(mktemp -t swiftos-smprace.XXXXXX)"
+SELFTEST_DTB=""
 PIDFILE="$(mktemp -t swiftos-smprace-pid.XXXXXX)"
+SELFTEST_DTB="$(mktemp -t swiftos-smprace-selftest.XXXXXX.dtb)"
 QP=""
 
 stop_qemu() {
@@ -53,7 +57,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; rm -f "$LOG" "$PIDFILE" "${SELFTEST_DTB:-}"' EXIT
 
 await() {
   local marker="$1" max="${2:-30}" n=0
@@ -79,10 +83,13 @@ elif [[ -n "${SMP_DTB:-}" && ! -f "$DTB" ]]; then
   exit 2
 fi
 
+# Opt-in: this harness asserts the SMPRACE boot demo markers.
+bake_selftest_dtb "$DTB" "${SELFTEST_DTB:-}" || exit 2
+
 "$QEMU" -M virt -cpu cortex-a72 -smp "$SMP_CPU_COUNT" -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
-  -device "loader,file=$DTB,addr=0x4FF00000,force-raw=on" \
+  -device "loader,file=${SELFTEST_DTB:-},addr=0x4FF00000,force-raw=on" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
   -kernel "$KERNEL" >"$LOG" 2>&1 &

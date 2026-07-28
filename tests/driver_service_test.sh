@@ -4,6 +4,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/bootargs.sh
+source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="${SMP_DTB:-$ROOT/build/virt-smp4.dtb}"
 DISK="$ROOT/build/base.img"
@@ -17,6 +19,7 @@ C5_AUTHORITY_TEST="${C5_AUTHORITY_TEST:-0}"
 [[ -f "$DISK" ]] || { echo "FAIL: $DISK missing (make base-image)" >&2; exit 2; }
 
 LOG="$(mktemp -t swiftos-c5-driver.XXXXXX)"
+SELFTEST_DTB=""
 PIDFILE="$(mktemp -t swiftos-c5-driver-pid.XXXXXX)"
 QP=""
 stop_qemu() {
@@ -33,13 +36,15 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; rm -f "$LOG" "$PIDFILE" "${SELFTEST_DTB:-}"' EXIT
 
 qemu_args=("$QEMU" -M virt -cpu cortex-a72 -smp "$SMP_CPU_COUNT" -m 256M
   -nographic -no-reboot -pidfile "$PIDFILE"
   -global virtio-mmio.force-legacy=false)
+SELFTEST_DTB="$(mktemp -t swiftos-selftest.XXXXXX.dtb)"
+bake_selftest_dtb "$DTB" "${SELFTEST_DTB:-}" || exit 2
 if [[ -f "$DTB" ]]; then
-  qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+  qemu_args+=(-device "loader,file=${SELFTEST_DTB:-},addr=0x4FF00000,force-raw=on")
 fi
 qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
   -device virtio-blk-device,drive=swosbase)
