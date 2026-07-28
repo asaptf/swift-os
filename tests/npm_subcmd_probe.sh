@@ -2,6 +2,8 @@
 # Probe which npm/node commands crash on SwiftOS (full boot + login).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="${NODE_DTB:-$ROOT/build/virt-2048.dtb}"
 DISK="$ROOT/build/base.img"
@@ -35,7 +37,7 @@ await() {
 }
 send() { printf '%s\n' "$1" >&3; sleep 0.15; }
 
-await "M7 tty: type a line then Enter" 60 || { echo "FAIL: no tty"; exit 1; }
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || { echo "FAIL: no tty"; exit 1; }
 send 'x'; await "M7 tty: running" 40 || true; printf '\003' >&3
 await "swift-os login:" 90 || { echo "FAIL: no login"; exit 1; }
 send 'root'; await "Password:" 30 || true; send 'swordfish'

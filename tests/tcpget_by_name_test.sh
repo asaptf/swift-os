@@ -13,6 +13,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -125,7 +127,7 @@ dtb_args=()
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "timed out waiting for tty line prompt"
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3
@@ -149,9 +151,12 @@ grep -qF "tcpget: connected by name" <<<"$clean" \
   || { echo "FAIL: client did not connect after resolve-by-name" >&2; ok=0; }
 grep -qF "srv-reply" <<<"$clean" \
   || { echo "FAIL: client did not receive the server reply" >&2; ok=0; }
-# Ensure the command line used a hostname, not a dotted IP as argv[1].
-grep -qE "/bin/tcpget ${HOSTNAME} " <<<"$clean" \
-  || { echo "FAIL: guest command did not invoke tcpget with hostname" >&2; ok=0; }
+# argv[1] being a hostname rather than a dotted IP is already proven by
+# EXPECT_RESOLVED above: tcpget prints the name it resolved, which it can only do
+# when it was given one. Do not re-add a grep for the echoed command line — the
+# kernel tty echo interleaves with concurrent kernel log lines, so the echo is
+# not a contiguous string on a busy runner (it failed exactly that way in CI
+# while every functional marker passed).
 strings "$PCAP" 2>/dev/null | grep -qF "GET swos" \
   || { echo "FAIL: client's request was not transmitted on the wire" >&2; ok=0; }
 

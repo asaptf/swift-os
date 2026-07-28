@@ -13,6 +13,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -98,7 +100,7 @@ send_line() {
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 60 || drive_fail "tty demo did not become ready"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "tty demo did not become ready"
 send_line 'tty-line'                    # M7 ttydemo: a line
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "tty demo did not accept input"
 printf '\003' >&3                       # Ctrl-C -> ttydemo exits, console-login starts

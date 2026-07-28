@@ -12,21 +12,28 @@
 //
 // Pools exercised (limits as of this writing; the test does not hard-code them,
 // it discovers the ceiling where a fixed ceiling still exists): per-process fds
-// (maxFDs=512), pipes (maxPipes=16), IPC endpoints (maxEndpoints=32). A small
-// fork/reap burst keeps process-slot reuse covered without treating the growable
-// process table as a bounded saturation target. A vnode create/unlink churn
-// confirms the tmpfs node pool stays balanced under repeated allocation without
-// driving the *shared* table to global exhaustion (which would starve the login
-// shell - that is a separate, riskier soak test).
+// (maxFDs=512), pipes (maxPipes=16), IPC endpoints (maxEndpoints=32). The process
+// table is different: PT2a/PT3a made slot storage growable from
+// kInitialProcessSlots with no fixed ceiling (growth stops only when a kernel
+// allocation fails). Driving that path to genuine memory exhaustion on a 256 MiB
+// guest is slow and unstable, so the process case does NOT assert fork refusal.
+// It instead forks a fixed batch past the initial capacity, proves the children
+// coexist and are fully reaped, and checks baseline return. A vnode create/unlink
+// churn confirms the tmpfs node pool stays balanced under repeated allocation
+// without driving the *shared* table to global exhaustion (which would starve
+// the login shell - that is a separate, riskier soak test).
 
 #include "lib/syscall.h"
 #include "lib/fs.h"
 
 int puts_raw(const char *s);
 
-// Upper guards so a missing ceiling can never spin forever. Each is comfortably
+// Must exceed kInitialProcessSlots (64 in process.swift) so the process table is
+// forced to grow at least once. Not a "cap must engage" guard — see
+// saturate_processes().
+#define PROC_BATCH 80
+// Upper guards for pools that still have a fixed ceiling. Each is comfortably
 // above the real kernel limit, so reaching it means the cap did NOT engage.
-#define PROC_GUARD 64
 #define FD_GUARD 1024
 #define PIPE_GUARD 64
 #define ENDPOINT_GUARD 64
@@ -77,18 +84,38 @@ static void make_vnode_path(char *dst, int i) {
     dst[pos] = 0;
 }
 
-// --- Processes: fork until the process table refuses, then reclaim. ----------
+// --- Processes: fixed batch past initial capacity, then reclaim. -------------
+//
+// Do NOT restore a "fork must refuse before PROC_*" assertion. The process
+// table starts at kInitialProcessSlots (64) and grows by processSlotGrowChunk
+// (64) with no upper bound until a kernel allocation fails (PT3a). Requiring
+// fork failure here was correct only for the old fixed 64-slot table; with a
+// growable table the guard is reached while the kernel is still healthy, which
+// is exactly the failure this test used to report (SAT-FAIL proc-cap-never-
+// engaged). Policy caps on process slots are an open design question and out
+// of scope for this smoke test. What we still prove: growth past the initial
+// capacity (PROC_BATCH live children), full reclaim, baseline fork recovery,
+// and no panic across the run.
 static int saturate_processes(void) {
     int block[2];
     if (pipe(block) != 0) {
         return fail("proc-pipe-setup");
     }
-    int pids[PROC_GUARD];
+    int pids[PROC_BATCH];
     int n = 0;
-    while (n < PROC_GUARD) {
+    while (n < PROC_BATCH) {
         int pid = fork();
         if (pid < 0) {
-            break; // graceful cap: the table refused without crashing.
+            // Every fork in the batch must succeed: refusal mid-batch means
+            // growth or slot allocation failed under a load that should fit.
+            // Drop the barrier so already-spawned children exit, then reap.
+            close(block[1]);
+            close(block[0]);
+            for (int i = 0; i < n; i += 1) {
+                int status = 0;
+                (void)waitpid(pids[i], &status, 0);
+            }
+            return fail("proc-fork-refused");
         }
         if (pid == 0) {
             // Child: drop the write end and block on the barrier pipe so it
@@ -101,17 +128,6 @@ static int saturate_processes(void) {
         pids[n++] = pid;
     }
 
-    if (n == 0) {
-        close(block[0]);
-        close(block[1]);
-        return fail("proc-no-children");
-    }
-    if (n >= PROC_GUARD) {
-        close(block[0]);
-        close(block[1]);
-        return fail("proc-cap-never-engaged");
-    }
-
     // Release: closing every write end unblocks each child's read -> they exit.
     close(block[1]);
     close(block[0]);
@@ -122,7 +138,7 @@ static int saturate_processes(void) {
         }
     }
 
-    // Baseline return: a fork must succeed now that the slots are free.
+    // Baseline return: a fork must succeed now that the children are reaped.
     int pid = fork();
     if (pid < 0) {
         return fail("proc-no-recover");

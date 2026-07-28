@@ -19,6 +19,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 SMP_CPU_COUNT="${SMP_CPUS:-1}"
 if [[ "$SMP_CPU_COUNT" -gt 1 ]]; then
@@ -93,7 +95,7 @@ await "DEVMMAP OK: device MMIO map authority enforced" 120 \
 
 # 2. Drive an interactive non-console login and run the probe as the guest
 #    principal: device_claim must be denied (EACCES) before any mapping.
-await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "timed out waiting for tty line prompt"
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3

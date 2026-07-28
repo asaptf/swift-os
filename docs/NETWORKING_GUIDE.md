@@ -244,9 +244,11 @@ qemu-system-aarch64 -M virt -cpu cortex-a72 -m 256M -nographic \
   -kernel build/kernel.elf
 ```
 
-On Darwin, QEMU/slirp IPv6 host forwarding can be unavailable or inconsistent.
-The checked-in IPv6 tests fall back to the link-local/NDP smoke when the host
-cannot provide true IPv6 host forwarding.
+QEMU/slirp IPv6 host forwarding (binding `[::1]`) can be unavailable — common
+on Darwin and on Linux hosts without usable IPv6. The checked-in IPv6 echo
+tests probe that capability and fall back to the link-local/NDP smoke when
+QEMU refuses the IPv6 hostfwd rules; hosts that can bind them still run the
+full echo path.
 
 ## Login And Capability
 
@@ -670,7 +672,8 @@ Use `ipv6=on` in the QEMU `-netdev` and run:
 ```
 
 The smoke test requires `net: IPv6 link-local configured`. The TCP and UDP echo
-tests exercise the dual-stack path; on Darwin they may report a hostfwd skip
+tests exercise the dual-stack path; when a capability probe finds that QEMU
+cannot bind IPv6 hostfwd (including on Darwin), they report a hostfwd skip
 after the IPv6 smoke passes.
 
 ## Verification Matrix
@@ -717,7 +720,7 @@ The user-visible end-to-end paths are the shell tests above.
 | DNS fails | Resolver not reachable or explicit test responder not running | Try `/bin/nslookup example.com`; for tests, start the responder and use `10.0.2.2 5354` |
 | SSH exits before stdout | Missing private key, stale base image, missing `/etc/ssh/authorized_keys`, missing `/etc/ssh/ssh_host_ed25519_seed`, stale or wrong host known_hosts entry, unsupported command syntax, invalid `/etc/ssh/ssh_kex_seed`, or a protocol regression | Use a private key whose `.pub` line was staged into the exact image, rebuild `base-image`, derive known_hosts from the exact image seed with `build/sshkey`, run a simple `/bin/id`, and check for `swift-os_sshd-session`, `sshd: loaded host key seed /etc/ssh/ssh_host_ed25519_seed`, optional `sshd: loaded kex seed /etc/ssh/ssh_kex_seed`, host-key match in OpenSSH debug output, `sshd: authorized key matched /etc/ssh/authorized_keys`, publickey auth, and `sshd: session exec completed status 0` |
 | TLS succeeds but certificate is untrusted | Expected current limit | Do not use `tlsget` for production trust decisions |
-| IPv6 echo skipped on Darwin | QEMU/slirp hostfwd limitation | Treat a pass from `./tests/ipv6_smoke_test.sh` as the current host proof |
+| IPv6 echo hostfwd skipped | QEMU cannot bind IPv6 hostfwd (`[::1]`) on this host | Treat a pass from `./tests/ipv6_smoke_test.sh` as the current host proof; the echo test prints the probe reason |
 
 For deeper diagnosis, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md#networking-problems)
 and collect serial evidence with [OBSERVABILITY_GUIDE.md](OBSERVABILITY_GUIDE.md).

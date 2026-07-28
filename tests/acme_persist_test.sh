@@ -17,6 +17,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=scripts/host-tools.sh
 source "$ROOT/scripts/host-tools.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -94,7 +96,7 @@ boot_and_login() {
     -kernel "$KERNEL" <"$INFIFO" >"$log" 2>&1 &
   QP=$!
   exec 3<>"$INFIFO"
-  await "M7 tty: type a line then Enter" 60 "$log" || return 1; send_line 'tty-line'
+  await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" "$log" || return 1; send_line 'tty-line'
   await "M7 tty: running; press Ctrl-C" 40 "$log" || return 1; printf '\003' >&3
   await "swift-os login:" 40 "$log" || return 1; send_line 'root'
   await "Password:" 30 "$log" || return 1; send_line 'swordfish'

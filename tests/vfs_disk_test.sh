@@ -9,6 +9,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
@@ -113,8 +115,10 @@ exec 3<>"$INFIFO"
 
 # This throwaway disk intentionally carries only busybox, guard fixtures, and
 # test files. With no /bin/ttydemo or /bin/console-login, init falls back
-# directly to raw ash.
-await "M12c: shell ready" 90 || drive_fail "busybox shell did not start"
+# directly to raw ash. First await after QEMU still covers the full pre-login
+# demo boot (role = DEMO_BOOT_TIMEOUT). The readiness marker is busybox's ash
+# banner — not "M12c: shell ready", which only console-login emits (absent here).
+await "built-in shell (ash)" "$DEMO_BOOT_TIMEOUT" || drive_fail "busybox shell did not start"
 send_line 'cat /etc/motd'
 await "$MARKER" 60 || drive_fail "/etc/motd marker not read from disk"
 send_line 'ls /'

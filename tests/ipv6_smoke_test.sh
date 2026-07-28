@@ -19,6 +19,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -89,7 +91,7 @@ exec 3<>"$INFIFO"
 # initialises very early, but the M7 demo can delay visible progress).
 # We don't need full login for this smoke — we just need the kernel to have
 # run netInit and printed the IPv6 line.
-await "M7 tty: type a line then Enter" 40 && send_line 'tty-line'
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" && send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C"  20 && printf '\003'           >&3
 
 # Now wait specifically for the IPv6 link-local configuration log.

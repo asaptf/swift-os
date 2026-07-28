@@ -16,6 +16,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 BASE="$ROOT/build/base.img"
@@ -107,7 +109,7 @@ send_line() {
 
 # Drive the boot demo past the interactive ttydemo to a root shell.
 to_shell() {
-  await "M7 tty: type a line then Enter" 60 || return 1
+  await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || return 1
   send_line 'tty-line'
   await "M7 tty: running; press Ctrl-C" 40 || return 1
   printf '\003' >&3
@@ -128,14 +130,14 @@ fail() { echo "FAIL: $1" >&2; ok=0; }
 boot_with "$STORE_A"
 await "update-store: SWOSBOOT manifest valid, active slot A" 60 || fail "A: slot A not selected"
 await "update-store: mounted active slot" 60 || fail "A: active slot not mounted"
-await "M7 tty: type a line then Enter" 90 || fail "A: did not exec from slot A"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || fail "A: did not exec from slot A"
 exec 3>&-; stop_qemu; QP=""
 
 # --- Case B: active slot B selected (a different LBA), verified, mounted ------
 boot_with "$STORE_B"
 await "update-store: SWOSBOOT manifest valid, active slot B" 60 || fail "B: slot B not selected"
 await "update-store: mounted active slot" 60 || fail "B: active slot not mounted"
-await "M7 tty: type a line then Enter" 90 || fail "B: did not exec from slot B"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || fail "B: did not exec from slot B"
 if grep -qF "active slot A" "$LOG"; then fail "B: selected slot A instead of B"; fi
 exec 3>&-; stop_qemu; QP=""
 

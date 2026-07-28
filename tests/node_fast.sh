@@ -10,6 +10,8 @@
 # fresh boot). For throughput once orphan-reap is fixed, larger N is valid.
 set -u
 ROOT="${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="${NODE_DTB:-$ROOT/build/virt-2048.dtb}"
 DISK="$ROOT/build/base.img"
@@ -52,7 +54,7 @@ send() { local s="$1" i; for ((i=0;i<${#s};i++)); do printf '%s' "${s:i:1}" >&3;
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 60 || fail "no tty prompt (kernel boot?)"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || fail "no tty prompt (kernel boot?)"
 send 'x'
 await "M7 tty: running; press Ctrl-C" 40 || fail "no ctrl-c prompt"
 printf '\003' >&3

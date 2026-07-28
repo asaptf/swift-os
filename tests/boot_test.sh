@@ -11,13 +11,13 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
-# 90s: every demo program is now loaded from disk (M11d), which is slower than
-# the old embedded blob; the reclaim self-test adds several fork/exec rounds —
-# give the full demo sequence room to finish.
-TIMEOUT="${TIMEOUT:-90}"
+# Poll ceiling for the full pre-login demo sequence (role = DEMO_BOOT_TIMEOUT).
+# Override via DEMO_BOOT_TIMEOUT or legacy TIMEOUT.
 
 EXPECTS="${EXPECTS:-[I] platform: M9 OK: hardware discovered from device tree
 [I] vfs: base image signature verified (ed25519)
@@ -267,7 +267,7 @@ forbidden_found() {
 }
 
 found=0
-for _ in $(seq 1 "$((TIMEOUT * 10))"); do
+for _ in $(seq 1 "$((DEMO_BOOT_TIMEOUT * 10))"); do
     if forbidden_found; then found=2; break; fi
     if all_found; then found=1; break; fi
     kill -0 "$QEMU_PID" 2>/dev/null || break
@@ -290,7 +290,7 @@ if [[ "$found" -eq 2 ]]; then
     exit 1
 fi
 
-echo "FAIL: not all expected lines seen within ${TIMEOUT}s. Serial log was:" >&2
+echo "FAIL: not all expected lines seen within ${DEMO_BOOT_TIMEOUT}s. Serial log was:" >&2
 echo "---------------------------------------------" >&2
 cat -v "$LOG" >&2
 echo "---------------------------------------------" >&2

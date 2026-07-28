@@ -9,6 +9,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
@@ -86,7 +88,7 @@ drive_fail() {
 QEMU_PID=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 60 || drive_fail "timed out waiting for tty line prompt"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "timed out waiting for tty line prompt"
 printf 'pinXg\033[D\177\n' >&3
 await "you typed: ping" 30 || drive_fail "typed line was not echoed back by read(0)"
 await "M7 tty: running; press Ctrl-C" 30 || drive_fail "timed out waiting for Ctrl-C prompt"

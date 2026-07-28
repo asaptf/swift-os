@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 GDB="${GDB:-/opt/homebrew/bin/aarch64-elf-gdb}"
 LOG=/tmp/npm_segv_serial.log
 GOUT=/tmp/npm_segv_gdb.out
@@ -22,7 +24,7 @@ exec 3<>"$INFIFO"
 await() { local m="$1" n=0; while ((n<900)); do grep -qF "$m" "$LOG" && return 0; sleep 0.1; n=$((n+1)); done; return 1; }
 send() { printf '%s\n' "$1" >&3; sleep 0.15; }
 
-await "M7 tty: type a line then Enter" 60
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT"
 send 'x'; await "M7 tty: running" 40 || true; printf '\003' >&3
 await "swift-os login:" 90; send 'root'; await "Password:" 30 || true; send 'swordfish'
 await "built-in shell (ash)" 60

@@ -12,6 +12,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -76,7 +78,7 @@ qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 40 && send_line 'tty-line'
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" && send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 20 && printf '\003' >&3
 await "swift-os login:" 20 && send_line 'root'
 await "Password:" 15 && send_line 'swordfish'

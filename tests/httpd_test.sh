@@ -5,11 +5,14 @@
 # a poll() loop multiplexing the listener + all live connections, serving files
 # from the /www docroot on the VFS. On QEMU builds that accept
 # `hostfwd=tcp:[::1]...`, set HTTPD_IPV6_HOSTFWD=1 to launch `/bin/httpd 6` and
-# drive the AF_INET6 listener with curl -6. Darwin QEMU rejects that hostfwd form,
-# so the default remains the portable IPv4 hostfwd acceptance path.
+# drive the AF_INET6 listener with curl -6. When unset, a capability probe of
+# IPv6 hostfwd decides (0 if QEMU cannot bind `[::1]`, 1 if it can). An explicit
+# HTTPD_IPV6_HOSTFWD setting always wins over the probe.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -17,14 +20,9 @@ QEMU="${QEMU:-qemu-system-aarch64}"
 HOST_PORT="${HTTPD_HOST_PORT:-$((23000 + ($$ % 20000)))}"
 INDEX_MARK="swift-os httpd"
 HELLO_MARK="hello from the swift-os static file server"
-HTTPD_IPV6_HOSTFWD="${HTTPD_IPV6_HOSTFWD:-}"
-if [[ -z "$HTTPD_IPV6_HOSTFWD" ]]; then
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    HTTPD_IPV6_HOSTFWD=0
-  else
-    HTTPD_IPV6_HOSTFWD=1
-  fi
-fi
+
+# shellcheck source=tests/lib/ipv6_hostfwd.sh
+source "$ROOT/tests/lib/ipv6_hostfwd.sh"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DISK" ]]; then
@@ -34,6 +32,15 @@ if [[ ! -f "$DTB" ]]; then
   ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
 fi
 command -v curl >/dev/null 2>&1 || { echo "FAIL: curl not found" >&2; exit 2; }
+
+HTTPD_IPV6_HOSTFWD="${HTTPD_IPV6_HOSTFWD:-}"
+if [[ -z "$HTTPD_IPV6_HOSTFWD" ]]; then
+  if qemu_ipv6_hostfwd_available >/dev/null; then
+    HTTPD_IPV6_HOSTFWD=1
+  else
+    HTTPD_IPV6_HOSTFWD=0
+  fi
+fi
 
 LOG="$(mktemp -t swiftos-httpd.XXXXXX)"
 O1="$(mktemp -t swiftos-httpd-o1.XXXXXX)"
@@ -113,7 +120,7 @@ qemu_args+=(
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 60 || drive_fail "tty demo did not become ready"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "tty demo did not become ready"
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "tty demo did not accept input"
 printf '\003' >&3

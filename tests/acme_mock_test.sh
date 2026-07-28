@@ -19,6 +19,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=scripts/host-tools.sh
 source "$ROOT/scripts/host-tools.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -101,7 +103,7 @@ send_line() { local line="$1" delay="${ACME_CHAR_DELAY:-0.01}" i
 QP=$!
 exec 3<>"$INFIFO"
 
-require_await "M7 tty: type a line then Enter" 60; send_line 'tty-line'
+require_await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT"; send_line 'tty-line'
 require_await "M7 tty: running; press Ctrl-C" 40; printf '\003' >&3
 require_await "swift-os login:" 40; send_line 'root'
 require_await "Password:" 30; send_line 'swordfish'

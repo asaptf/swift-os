@@ -8,6 +8,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
@@ -17,6 +19,9 @@ HOST_PORT="${SSHD_IPV6_SUPERVISION_HOST_PORT:-$((32000 + ($$ % 11000)))}"
 HOSTFWD_MODE="${SSHD_IPV6_SUPERVISION_HOSTFWD:-auto}"
 KEY_SRC="$ROOT/fixtures/ssh/sshd_hc5_ed25519"
 HOST_SEED_SRC="$ROOT/base/etc/ssh/ssh_host_ed25519_seed"
+
+# shellcheck source=tests/lib/ipv6_hostfwd.sh
+source "$ROOT/tests/lib/ipv6_hostfwd.sh"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 [[ -f "$KEY_SRC" ]] || { echo "FAIL: $KEY_SRC missing" >&2; exit 2; }
@@ -28,11 +33,14 @@ if [[ ! -f "$DTB" ]]; then
   ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
 fi
 
+# Explicit HOSTFWD_MODE wins; only "auto" consults the IPv6 hostfwd capability probe.
 drive_openssh=1
 if [[ "$HOSTFWD_MODE" == "0" || "$HOSTFWD_MODE" == "off" || "$HOSTFWD_MODE" == "false" ]]; then
   drive_openssh=0
-elif [[ "$HOSTFWD_MODE" == "auto" && "$(uname -s)" == "Darwin" ]]; then
-  drive_openssh=0
+elif [[ "$HOSTFWD_MODE" == "auto" ]]; then
+  if ! qemu_ipv6_hostfwd_available >/dev/null; then
+    drive_openssh=0
+  fi
 fi
 if [[ "$drive_openssh" -eq 1 ]]; then
   command -v "$SSH" >/dev/null 2>&1 || { echo "FAIL: ssh client not found" >&2; exit 2; }
@@ -166,7 +174,7 @@ send_line() {
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 60 || drive_fail "tty demo did not become ready"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "tty demo did not become ready"
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "tty demo did not accept input"
 printf '\003' >&3

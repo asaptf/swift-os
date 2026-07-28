@@ -10,6 +10,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=scripts/host-tools.sh
 source "$ROOT/scripts/host-tools.sh"
 ESP_DIR="$ROOT/build/esp"
@@ -94,7 +96,7 @@ send_text() {  # send_text TEXT
 QP=$!
 
 exec 3<>"$IN"
-wait_for "M7 tty: type a line then Enter" 1800 && send_text $'tty-line\n'
+wait_for "M7 tty: type a line then Enter" $((DEMO_BOOT_TIMEOUT * 10)) && send_text $'tty-line\n'
 wait_for "M7 tty: running; press Ctrl-C" 480 && send_text $'\003'
 # M12c: console-login is the init program — authenticate before the shell.
 if wait_for "swift-os login:" 480; then

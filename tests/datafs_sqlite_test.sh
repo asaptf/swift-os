@@ -9,6 +9,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 BASE_IMG="$ROOT/build/base.img"
@@ -79,7 +81,7 @@ start_boot() {  # start_boot LOGFILE INFIFO
 }
 
 login() {
-  await "M7 tty: type a line then Enter" 60 || fail "no tty line prompt"
+  await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || fail "no tty line prompt"
   send 'tty-line'
   await "M7 tty: running; press Ctrl-C" 40 || fail "no tty Ctrl-C prompt"
   printf '\003' >&3; sleep 0.15
@@ -94,6 +96,12 @@ login() {
 start_boot "$WORK/boot1.log" "$WORK/in1"
 await "D1 OK: datafs mounted at /data" 60 || fail "datafs not mounted (boot 1)"
 login
+# Probe /data writability before involving SQLite. "attempt to write a readonly
+# database" is ambiguous on its own — it looks the same whether the datafs mount
+# is missing (so /data resolves to the read-only base image), the volume is full,
+# or SQLite itself cannot create its journal. This separates them in the log.
+send 'touch /data/.wprobe; echo DATA-WPROBE-rc=$?'
+await "DATA-WPROBE-rc=0" 30 || fail "/data is not writable before sqlite (mount or permissions)"
 send "sqlite3 /data/app.db \"create table t(x text); insert into t values('$MARK');\""
 send 'echo SQLITE-WROTE-rc=$?'
 await "SQLITE-WROTE-rc=0" 60 || fail "sqlite3 create/insert did not exit 0 (boot 1)"

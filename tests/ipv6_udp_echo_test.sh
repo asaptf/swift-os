@@ -2,17 +2,23 @@
 # ipv6_udp_echo_test.sh — IPv6-enabled UDP smoke.
 #
 # Boots with slirp netdev `ipv6=on` to exercise EUI-64 link-local/NDP setup.
-# Darwin QEMU rejects IPv6 hostfwd literals, so on that platform this falls back
-# to the dedicated IPv6 smoke test. On QEMU builds that support IPv6 hostfwd,
-# the body below remains the place to tighten true AF_INET6 UDP echo coverage.
+# When this QEMU on this host cannot bind the IPv6 hostfwd literals used below
+# (common on Darwin and on Linux runners without usable IPv6), fall back to the
+# dedicated IPv6 smoke test. The decision is a capability probe, not an OS-name
+# check: hosts that can bind `[::1]` hostfwd still run the full echo body.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 MSG="swos-ipv6-udp"
+
+# shellcheck source=tests/lib/ipv6_hostfwd.sh
+source "$ROOT/tests/lib/ipv6_hostfwd.sh"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DISK" ]]; then
@@ -23,19 +29,35 @@ if [[ ! -f "$DTB" ]]; then
 fi
 command -v nc >/dev/null 2>&1 || { echo "FAIL: nc not found (needed to send the datagram)" >&2; exit 2; }
 
-if [[ "$(uname -s)" == "Darwin" ]]; then
+# Netdev string for the real boot (IPv4 hostfwd for the echo path plus the IPv6
+# hostfwd literals that many hosts cannot bind).
+ipv6_udp_netdev() {  # ipv6_udp_netdev HOST_PORT_A HOST_PORT_B
+  printf 'user,id=n0,ipv6=on,hostfwd=udp:127.0.0.1:%s-:5555,hostfwd=udp:[::1]:%s-:5555,hostfwd=udp:[::1]:%s-:5556' \
+    "$1" "$1" "$2"
+}
+
+skip_to_ipv6_smoke() {
+  local why="$1"
   if ! "$ROOT/tests/ipv6_smoke_test.sh" >/dev/null; then
-    echo "FAIL: IPv6 UDP echo hostfwd skipped on Darwin QEMU, and IPv6 smoke failed" >&2
+    echo "FAIL: IPv6 UDP echo hostfwd skipped ($why), and IPv6 smoke failed" >&2
     exit 1
   fi
-  echo "PASS: IPv6 UDP echo hostfwd skipped on Darwin QEMU; IPv6 link-local/NDP smoke passed"
+  echo "PASS: IPv6 UDP echo hostfwd skipped (capability probe: $why); IPv6 link-local/NDP smoke passed"
   exit 0
+}
+
+PROBE_REASON=""
+if ! PROBE_REASON="$(qemu_ipv6_hostfwd_available)"; then
+  skip_to_ipv6_smoke "${PROBE_REASON:-QEMU refused IPv6 hostfwd}"
 fi
 
 LOG="$(mktemp -t swiftos-ipv6-udp.XXXXXX)"
 NCOUT="$(mktemp -t swiftos-ipv6-udp-nc.XXXXXX)"
 PIDFILE="$(mktemp -t swiftos-ipv6-udp-pid.XXXXXX)"
 INFIFO="$(mktemp -u -t swiftos-ipv6-udp-in.XXXXXX)"; mkfifo "$INFIFO"
+# Fixed guest-facing host ports for the echo body (probe used ephemeral ports).
+HOST_PORT_A=5555
+HOST_PORT_B=5556
 QP=""
 stop_qemu() {
   if [[ -f "$PIDFILE" ]]; then
@@ -61,14 +83,27 @@ await() {  # await MARKER [MAXSEC]
   return 1
 }
 
+# Dump enough log for CI: QEMU startup refusals live at the top; guest traffic
+# near "udpecho:". Keep both bounded so a full serial dump is not required.
+dump_fail_log() {
+  echo "--- qemu/serial (first 40 lines) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | head -40 >&2 || true
+  echo "--- serial (udpecho region) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | sed -n '/udpecho:/,$p' | head -20 >&2 || true
+  if [[ ! -s "$LOG" ]]; then
+    echo "(log empty — QEMU likely exited before producing serial output)" >&2
+  fi
+  echo "--- nc output ---" >&2
+  cat "$NCOUT" 2>/dev/null >&2 || true
+}
+
 # Boot QEMU with console driven via FIFO (fd 3). Reactive input prevents flakes.
-# netdev has ipv6=on (the point of this dedicated test) plus the IPv4 hostfwd
-# path supported by this QEMU build. True nc -6 hostfwd literals are rejected
-# here, so that belongs in a later transport-specific test.
+# netdev has ipv6=on plus IPv4 hostfwd for the echo path and IPv6 hostfwd
+# literals when the probe above accepted them.
 qemu_args+=(
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
   -device virtio-blk-device,drive=swosbase
-  -netdev "user,id=n0,ipv6=on,hostfwd=udp:127.0.0.1:5555-:5555,hostfwd=udp:[::1]:5555-:5555,hostfwd=udp:[::1]:5556-:5556"
+  -netdev "$(ipv6_udp_netdev "$HOST_PORT_A" "$HOST_PORT_B")"
   -device virtio-net-device,netdev=n0
   -kernel "$KERNEL"
 )
@@ -76,9 +111,33 @@ qemu_args+=(
 QP=$!
 exec 3<>"$INFIFO"
 
+# If QEMU dies immediately after the probe claimed success (race/port steal),
+# fail loudly with the log head rather than five empty-serial assertions.
+for _ in $(seq 1 30); do
+  if ! kill -0 "$QP" 2>/dev/null; then
+    wait "$QP" 2>/dev/null || true
+    QP=""
+    echo "FAIL: QEMU exited before guest boot (see log head for hostfwd/startup errors)" >&2
+    dump_fail_log
+    exit 1
+  fi
+  # Any serial output means the process survived netdev setup.
+  if [[ -s "$LOG" ]] && ! grep -qiE 'Invalid host forwarding|Could not set up host forwarding' "$LOG" 2>/dev/null; then
+    break
+  fi
+  if grep -qiE 'Invalid host forwarding|Could not set up host forwarding' "$LOG" 2>/dev/null; then
+    stop_qemu
+    QP=""
+    echo "FAIL: QEMU refused hostfwd after capability probe (unexpected; see log)" >&2
+    dump_fail_log
+    exit 1
+  fi
+  sleep 0.1
+done
+
 # Reactive login + launch (same prompts as other net tests). The net stack
 # (incl. IPv6 link-local via NDP) initialises very early; we just need past M7.
-await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n'     >&3
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" && printf 'tty-line\n'     >&3
 await "M7 tty: running; press Ctrl-C"  20 && printf '\003'           >&3
 await "swift-os login:"                20 && printf 'root\n'         >&3
 await "Password:"                      15 && printf 'swordfish\n'    >&3
@@ -93,7 +152,7 @@ done
 
 # Main data exchange over IPv4 hostfwd while the NIC is running with ipv6=on.
 if [[ "$listening" -eq 1 ]]; then
-  printf '%s' "$MSG" | nc -u -w2 127.0.0.1 5555 >"$NCOUT" 2>/dev/null || true
+  printf '%s' "$MSG" | nc -u -w2 127.0.0.1 "$HOST_PORT_A" >"$NCOUT" 2>/dev/null || true
 fi
 
 sleep 2
@@ -123,7 +182,5 @@ if [[ "$ok" -eq 1 ]]; then
   echo "PASS: /bin/udpecho UDP round-trip under ipv6=on netdev (NDP + dual-stack smoke)"
   exit 0
 fi
-echo "--- serial (udpecho region) ---" >&2
-sed -n '/udpecho:/,$p' <<<"$clean" | head -20 >&2
-echo "--- nc output ---" >&2; cat "$NCOUT" >&2
+dump_fail_log
 exit 1

@@ -1,32 +1,54 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # datafs_test.sh — D1 acceptance: the persistent /data filesystem survives reboot.
 #
-# Boots the real base image with a writable "data" disk, logs in, and through the
-# normal VFS syscall path (busybox `>` redirect, mkdir, cat, ls) creates a file
-# and a nested file under /data. Then it reboots against the SAME data disk and
-# reads them back. Seeing the file contents after a full reboot proves datafs
-# persists to the block device (not RAM tmpfs) and that the on-disk inode/bitmap/
-# directory structures survive remount.
+# Boots a dedicated base image (not the shared build/base.img) with a writable
+# "data" disk, logs in, and through the normal VFS syscall path (busybox `>`
+# redirect, mkdir, cat, ls) creates a file and a nested file under /data. Then it
+# reboots against the SAME data disk and reads them back. Seeing the file
+# contents after a full reboot proves datafs persists to the block device (not
+# RAM tmpfs) and that the on-disk inode/bitmap/directory structures survive
+# remount.
+#
+# Hermetic image: earlier steps in `make test` rebuild build/base.img as the
+# prod profile (supervised services, headless). This harness builds its own
+# interactive image with non-supervised services so console-login is available
+# regardless of which test ran last (same pattern as sshd_supervision_test /
+# init_restart_rate_test).
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
-BASE_IMG="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 
 PERSISTMARK="swiftos-DATAFS-PERSIST-9q2z"
 NESTMARK="swiftos-DATAFS-NESTED-5x8w"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
-if [[ ! -f "$BASE_IMG" ]]; then
-  ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || { echo "FAIL: cannot build base.img" >&2; exit 2; }
+if [[ ! -f "$DTB" ]]; then
+  ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
 fi
 
 WORK="$(mktemp -d -t swiftos-datafs.XXXXXX)"
 DATA_IMG="$WORK/data.img"
+BASE_IMG="$WORK/base-datafs.img"
+BASE_ROOT="$WORK/base-root"
+SERVICES="$WORK/services"
 PIDFILE="$(mktemp -t swiftos-datafs-pid.XXXXXX)"
 QP=""; CURLOG=""
+
+# Non-supervised tokens only: swos-init must hand off to console-login so the
+# serial login path this test drives is available. Do not use the shared
+# build/base.img (may be prod-flavoured / headless from a prior test step).
+printf 'inputd\nsshd\ncrond\n' >"$SERVICES"
+if ! ( cd "$ROOT" && make BASE_IMG="$BASE_IMG" BASE_ROOT="$BASE_ROOT" SWOS_SERVICES_FILE="$SERVICES" base-image ) >"$WORK/base-image.log" 2>&1; then
+  echo "FAIL: could not build datafs base image" >&2
+  cat "$WORK/base-image.log" >&2
+  exit 2
+fi
 
 dd if=/dev/zero of="$DATA_IMG" bs=1048576 count=16 2>/dev/null
 printf 'SWDATAFS' | dd of="$DATA_IMG" bs=1 seek=0 conv=notrunc 2>/dev/null
@@ -83,7 +105,7 @@ start_boot() {  # start_boot LOGFILE INFIFO
 }
 
 login() {  # walk the boot tty + login prompts to a root busybox shell
-  await "M7 tty: type a line then Enter" 60 || fail "no tty line prompt"
+  await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || fail "no tty line prompt"
   send 'tty-line'
   await "M7 tty: running; press Ctrl-C" 40 || fail "no tty Ctrl-C prompt"
   printf '\003' >&3; sleep 0.15

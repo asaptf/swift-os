@@ -338,8 +338,11 @@ Notes:
 
 - `/bin/httpd` and `/bin/llmd` both bind guest TCP 8080; run one service at a
   time.
-- Darwin/QEMU host-forwarding behavior can limit some IPv6 end-to-end tests.
-  The host `net_test` covers protocol logic more aggressively.
+- Some IPv6 end-to-end tests need QEMU IPv6 `hostfwd` (binding `[::1]`). The
+  harness probes that capability; when it is absent (common on Darwin and on
+  Linux hosts without usable IPv6), those tests fall back to the IPv6
+  link-local/NDP smoke. The host `net_test` covers protocol logic more
+  aggressively.
 - TLS support is a smoke path; certificate trust policy is not production-ready.
 
 Use [Networking Guide](NETWORKING_GUIDE.md) for the complete runbook.

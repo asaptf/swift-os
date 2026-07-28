@@ -18,6 +18,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 BASE="$ROOT/build/base.img"
@@ -55,7 +57,7 @@ dtb_args=()
 await() { local m="$1" max="${2:-30}" n=0; while (( n < max*10 )); do grep -qF "$m" "$LOG" 2>/dev/null && return 0; sleep 0.1; n=$((n+1)); done; return 1; }
 send() { sleep 0.3; local s="$1" i; for (( i=0; i<${#s}; i++ )); do printf '%s' "${s:i:1}" >&3; sleep 0.03; done; }
 to_shell() {
-  await "M7 tty: type a line then Enter" 60 || return 1
+  await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || return 1
   send $'tty-line\n'; await "M7 tty: running; press Ctrl-C" 40 || return 1
   send $'\003'; await "swift-os login:" 90 || return 1
   send $'root\n'; await "Password:" 90 || return 1

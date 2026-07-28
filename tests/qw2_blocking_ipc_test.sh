@@ -15,6 +15,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="${SMP_DTB:-$ROOT/build/virt-smp4.dtb}"
 DISK="$ROOT/build/base.img"
@@ -89,7 +91,7 @@ send_line() {
 }
 
 # Boot and login.
-await "M7 tty: type a line then Enter" 60
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT"
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40
 printf '\003' >&3

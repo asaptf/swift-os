@@ -18,6 +18,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 SMP_CPU_COUNT="${SMP_CPUS:-4}"
 if [[ "$SMP_CPU_COUNT" -gt 1 ]]; then
@@ -98,11 +100,13 @@ QP=$!
 exec 3<>"$INFIFO"
 
 # 1. Kernel must have handed virtio-input to userland (C5i precondition).
+# Early assertion — short ceiling; not the demo-boot wait.
 await "virtio-kbd: kernel skipped virtioKbdInit (userland driver owns virtio-input)" 60 \
   || fail "kernel did not skip its in-kernel virtio-input driver"
 
 # 2. Drive past the serial milestone tty demo so boot reaches swos-init.
-await "M7 tty: type a line" 60 || fail "timed out waiting for tty line prompt"
+# First readiness await covering the pre-login demo boot (role = DEMO_BOOT_TIMEOUT).
+await "M7 tty: type a line" "$DEMO_BOOT_TIMEOUT" || fail "timed out waiting for tty line prompt"
 send_line 'x'
 await "M7 tty: running; press Ctrl-C" 40 || fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3

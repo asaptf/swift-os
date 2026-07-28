@@ -14,6 +14,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=scripts/host-tools.sh
 source "$ROOT/scripts/host-tools.sh"
 DISK_IMG="$ROOT/build/swift-os.img"
@@ -91,7 +93,7 @@ fail() { echo "FAIL: $1" >&2; ok=0; }
 
 # Drive to a root shell.
 to_shell() {
-  await "M7 tty: type a line then Enter" 90 || return 1
+  await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || return 1
   send $'tty-line\n'
   await "M7 tty: running; press Ctrl-C" 40 || return 1
   send $'\003'

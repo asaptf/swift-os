@@ -2,6 +2,8 @@
 # node_fetch_test.sh — Node HTTP client smoke to slirp gateway (10.0.2.2).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="${NODE_DTB:-$ROOT/build/virt-2048.dtb}"
 DISK="$ROOT/build/base.img"
@@ -42,7 +44,7 @@ dtb_args=()
   -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!; exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 60 || { echo FAIL: no tty >&2; exit 1; }
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || { echo FAIL: no tty >&2; exit 1; }
 send tty-line
 await "M7 tty: running; press Ctrl-C" 40 || exit 1
 printf '\003' >&3

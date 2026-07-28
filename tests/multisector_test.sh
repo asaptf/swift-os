@@ -21,6 +21,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -83,7 +85,7 @@ await "M6 OK: ELF process exited, code 7" 60 || fail "demo ELF did not load/run 
 
 # The large multi-chunk read: launching the ash shell loads busybox.elf (~1.1 MB)
 # through a single virtioBlkReadRange spanning ~18 of the 64 KiB chunks.
-if await "M7 tty: type a line then Enter" 60; then
+if await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT"; then
   send $'tty-line\n'
   await "M7 tty: running; press Ctrl-C" 40 || fail "could not pass ttydemo"
   send $'\003'

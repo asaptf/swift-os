@@ -22,6 +22,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 STUBS_SRC="$ROOT/userland/compat/stubs.c"
@@ -157,7 +159,7 @@ send_line() {
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 90 || drive_fail "timed out waiting for tty line prompt"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "timed out waiting for tty line prompt"
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 60 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3

@@ -2,6 +2,8 @@
 # Quick probe: after npm install tarball, can busybox cat and node read the module?
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="${NODE_DTB:-$ROOT/build/virt-2048.dtb}"
 DISK="$ROOT/build/base.img"
@@ -33,7 +35,7 @@ await() {
 }
 fail() { echo "FAIL: $1"; tail -30 "$LOG"; exit 1; }
 
-await "M7 tty: type a line then Enter" 60 || fail "no tty"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || fail "no tty"
 send 'x'
 await "M7 tty: running" 40 || fail "no tty running"
 printf '\003' >&3

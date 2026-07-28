@@ -7,11 +7,12 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 SMP_CPUS="${SMP_CPUS:-4}"
-TIMEOUT="${TIMEOUT:-180}"
 
 if [[ ! "$SMP_CPUS" =~ ^[0-9]+$ ]] || (( 10#$SMP_CPUS < 1 )); then
   echo "FAIL: SMP_CPUS must be a positive integer, got '$SMP_CPUS'." >&2
@@ -105,7 +106,7 @@ QP=$!
 exec 3<>"$INFIFO"
 
 # Login only — s4stress is the login shell and runs immediately after auth.
-await "M7 tty: type a line then Enter" "$TIMEOUT" || drive_fail "timed out waiting for tty line prompt"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "timed out waiting for tty line prompt"
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3

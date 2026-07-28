@@ -31,6 +31,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=scripts/host-tools.sh
 source "$ROOT/scripts/host-tools.sh"
 BASE="$ROOT/build/base.img"
@@ -89,7 +91,7 @@ send() {
   for (( i = 0; i < ${#s}; i++ )); do printf '%s' "${s:i:1}" >&3; sleep 0.03; done
 }
 to_shell() {
-  await "M7 tty: type a line then Enter" 120 || return 1
+  await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || return 1
   send $'tty-line\n'; await "M7 tty: running; press Ctrl-C" 60 || return 1
   send $'\003'; await "swift-os login:" 120 || return 1
   send $'root\n'; await "Password:" 90 || return 1
