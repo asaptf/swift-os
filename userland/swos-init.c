@@ -3,18 +3,23 @@
 //
 // This is deliberately not a full service manager. It reads immutable
 // /etc/swos/services, starts a small allowlisted set of boot services with
-// fork+exec, then starts /bin/console-login as a child. Opt-in supervised
-// service tokens restart children that exit; the console session stays available
-// either way. Long-running children inherit the boot principal/capabilities and
-// keep logging to serial.
+// fork+exec, then either:
+//   - headless: when any opt-in supervised token was requested, stays as a
+//     restart loop (production profile — no console-login session); or
+//   - interactive: starts /bin/console-login as a child and reaps daemons for
+//     the life of that session.
+// Long-running children inherit the boot principal/capabilities and keep
+// logging to serial.
 //
-// Restart policy is rate-based, not kind-based. A child that dies soon after
-// start is treated as a startup failure: consecutive quick deaths are counted
-// and the service is given up on after MAX_RESTARTS_PER_SERVICE. A child that
-// ran for at least MIN_SUCCESSFUL_RUN_SECS before exiting (e.g. sshd after a
-// real session, or sshd-once after accept) is restarted immediately with the
-// consecutive-failure counter reset — so legitimate long-run restarts stay
-// unbounded and prompt. Elapsed time comes from SYS_SYSINFO uptime ticks.
+// Restart policy is rate-based, not kind-based, and applies on both the
+// headless supervision loop and the console-session reaping loop. A child that
+// dies soon after start is treated as a startup failure: consecutive quick
+// deaths are counted and the service is given up on after
+// MAX_RESTARTS_PER_SERVICE. A child that ran for at least
+// MIN_SUCCESSFUL_RUN_SECS before exiting (e.g. sshd after a real session, or
+// sshd-once after accept) is restarted immediately with the consecutive-failure
+// counter reset — so legitimate long-run restarts stay unbounded and prompt.
+// Elapsed time comes from SYS_SYSINFO uptime ticks.
 
 #include "lib/fs.h"
 #include "lib/syscall.h"
@@ -398,25 +403,67 @@ static int restart_supervised_pid(int pid, int status) {
     return 0;
 }
 
+static int any_live_supervised(void) {
+    int i;
+    for (i = 0; i < supervised_count; i += 1) {
+        if (supervised[i].pid > 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Stay as PID 1 without children. Used after every supervised service has been
+// given up on so the kernel does not restart init and re-spawn the crash loop.
+static void park_forever(void) {
+    while (1) {
+        (void)__syscall3(SYS_NANOSLEEP, 60, 0, 0);
+    }
+}
+
+// Headless production path: supervised tokens keep swos-init alive as a restart
+// loop. No console-login session is opened (prod_boot_test asserts this).
+static int supervise_services_forever(void) {
+    puts_raw("swos-init: supervision active\n");
+    while (1) {
+        int status = 0;
+        int pid = waitpid(-1, &status, 0);
+        if (pid < 0) {
+            // No reaping work left (all services given up). Park rather than
+            // exit — exiting would make the kernel restart init and replay the
+            // start/crash-loop/give-up cycle forever.
+            if (!any_live_supervised()) {
+                park_forever();
+            }
+            puts_raw("swos-init: supervision waitpid failed\n");
+            return 1;
+        }
+        if (!restart_supervised_pid(pid, status)) {
+            puts_raw("swos-init: child pid ");
+            print_uint((unsigned int)pid);
+            puts_raw(" exited outside service table\n");
+        }
+    }
+}
+
 int main(void) {
     puts_raw("swos-init: starting configured services\n");
     seed_site();
     apply_os_stage_test_fixture();
     start_configured_services();
     if (supervision_requested) {
-        puts_raw("swos-init: supervision active\n");
+        return supervise_services_forever();
     }
-    // Run the interactive console login as a CHILD (a sibling of the daemons),
+    // Interactive path: run console-login as a CHILD (a sibling of the daemons),
     // rather than execve-ing it in place. If swos-init *became* the shell (the
     // old handoff), the shell would be the parent of sshd/crond, and busybox
     // ash's blocking wait(-1) would hang forever on a never-exiting daemon child
     // after a foreground command exits (see docs/NOTES.md, CR2). As a child the
     // shell only ever parents its own foreground jobs. swos-init reaps any daemon
-    // that exits during the session (and restarts supervised ones under the
-    // rate-based policy above); when the login child ends it exits with that
-    // code — so slot0 exits and the kernel prints "M12c: session ended" and
-    // restarts init exactly as before. Supervision and console-login run
-    // together so a crash-looping service cannot starve the login prompt.
+    // that exits during the session and applies the same rate-based restart
+    // policy to any supervised children that may be in the table; when the login
+    // child ends it exits with that code — so slot0 exits and the kernel prints
+    // "M12c: session ended" and restarts init exactly as before.
     puts_raw("swos-init: starting console-login session\n");
     int login = fork();
     if (login < 0) {
@@ -441,10 +488,6 @@ int main(void) {
         }
         // Supervised daemon exit → rate-based restart (or give up). Unsupervised
         // daemons are simply reaped; keep serving the login session either way.
-        if (!restart_supervised_pid(pid, status) && supervision_requested) {
-            puts_raw("swos-init: child pid ");
-            print_uint((unsigned int)pid);
-            puts_raw(" exited outside service table\n");
-        }
+        (void)restart_supervised_pid(pid, status);
     }
 }

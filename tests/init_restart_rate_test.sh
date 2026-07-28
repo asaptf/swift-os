@@ -4,14 +4,14 @@
 #
 # Builds a temporary base image whose service manifest uses `false-supervised`
 # (a supervised child that exits immediately on every start). swos-init must:
-#   1. treat each quick death as a startup failure and restart it only a bounded
+#   1. enter headless supervision (production path — no console-login),
+#   2. treat each quick death as a startup failure and restart it only a bounded
 #      number of times,
-#   2. print the existing "crash-looped; giving up after N restarts" line,
-#   3. still start console-login so the serial login prompt appears.
+#   3. print the existing "crash-looped; giving up after N restarts" line.
 #
 # Without the rate-based policy (kind-based unbounded restarts), a supervised
-# crash-loop keeps exclusive supervision busy and starves the console path —
-# the datafs / prod-profile nightly failure mode when accept() fails in a loop.
+# crash-loop burns CPU and log bandwidth forever. Rate limiting applies on the
+# headless supervision loop (this test) and on the console-session reaping loop.
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -89,8 +89,8 @@ send_line() {
 QP=$!
 exec 3<>"$INFIFO"
 
-# Walk the demo tty, then require the supervised crash-loop to halt and the
-# console login path to remain usable.
+# Walk the demo tty into swos-init, then require the supervised crash-loop to
+# halt under the rate policy. Supervised mode is headless — no console-login.
 await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "tty demo did not become ready"
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "tty demo did not accept input"
@@ -99,7 +99,11 @@ printf '\003' >&3
 await "swos-init: supervision active" 90 || drive_fail "swos-init did not enter supervision mode"
 await "swos-init: service false crash-looped; giving up after 5 restarts" 60 \
   || drive_fail "false service was not rate-limited / given up on"
-await "swift-os login:" 90 || drive_fail "no login prompt (console starved by restart loop)"
+
+# Headless: must not hand off to console-login (prod profile property).
+if grep -qF "swos-init: starting console-login session" "$LOG" 2>/dev/null; then
+  drive_fail "supervised mode opened console-login (expected headless)"
+fi
 
 exec 3>&-
 stop_qemu
@@ -112,8 +116,10 @@ grep -qF "swos-init: supervision active" <<<"$clean" \
   || { echo "FAIL: supervision marker missing" >&2; ok=0; }
 grep -qF "swos-init: service false crash-looped; giving up after 5 restarts" <<<"$clean" \
   || { echo "FAIL: give-up message missing" >&2; ok=0; }
-grep -qF "swift-os login:" <<<"$clean" \
-  || { echo "FAIL: login prompt missing" >&2; ok=0; }
+if grep -qF "swos-init: starting console-login session" <<<"$clean"; then
+  echo "FAIL: supervised mode handed off to console-login" >&2
+  ok=0
+fi
 
 # Bound the spin: initial start + at most MAX_RESTARTS_PER_SERVICE restarts
 # (and a small slack). A tight kind-based loop produces hundreds of starts.
@@ -134,7 +140,7 @@ if [[ "$restarts" -gt 12 ]]; then
 fi
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: swos-init rate-limited quick deaths and kept the login prompt"
+  echo "PASS: swos-init rate-limited quick deaths under headless supervision"
   exit 0
 fi
 
