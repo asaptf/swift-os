@@ -99,9 +99,29 @@ login
 # Probe /data writability before involving SQLite. "attempt to write a readonly
 # database" is ambiguous on its own — it looks the same whether the datafs mount
 # is missing (so /data resolves to the read-only base image), the volume is full,
-# or SQLite itself cannot create its journal. This separates them in the log.
+# or SQLite itself cannot create its journal / lock / truncate. Each probe prints
+# its own greppable rc= line so a CI failure names the missing capability without
+# another round trip. Verdicts below are unchanged: only SQLITE-WROTE must be 0.
 send 'touch /data/.wprobe; echo DATA-WPROBE-rc=$?'
 await "DATA-WPROBE-rc=0" 30 || fail "/data is not writable before sqlite (mount or permissions)"
+# Exact rollback-journal name SQLite will open next to /data/app.db.
+send 'touch /data/app.db-journal; echo JOURNAL-CREATE-rc=$?'
+await "JOURNAL-CREATE-rc=" 30 || fail "journal-create probe did not print"
+send 'rm -f /data/app.db-journal'
+# Write with journalling disabled — if this works, the failure is not generic
+# file create/write; it is something the default DELETE journal path needs.
+send "sqlite3 /data/.nojprobe.db \"pragma journal_mode=off; create table t(x); insert into t values(1);\""
+send 'echo SQLITE-NOJRNL-rc=$?'
+await "SQLITE-NOJRNL-rc=" 60 || fail "journal_mode=off probe did not print"
+# ftruncate path: write non-empty, then O_TRUNC to zero (same datafsTruncate
+# backend as SYS_FTRUNCATE for length 0 on datafs).
+send 'printf xxxx > /data/.truncprobe; : > /data/.truncprobe; echo FTRUNCATE-rc=$?'
+await "FTRUNCATE-rc=" 30 || fail "ftruncate probe did not print"
+# fcntl advisory lock: BEGIN EXCLUSIVE with journal_mode=off still takes a
+# POSIX lock via F_SETLK without needing the rollback journal file.
+send "sqlite3 /data/.lockprobe.db \"pragma journal_mode=off; begin exclusive; create table t(x); insert into t values(1); commit;\""
+send 'echo FCNTL-LOCK-rc=$?'
+await "FCNTL-LOCK-rc=" 60 || fail "fcntl-lock probe did not print"
 send "sqlite3 /data/app.db \"create table t(x text); insert into t values('$MARK');\""
 send 'echo SQLITE-WROTE-rc=$?'
 await "SQLITE-WROTE-rc=0" 60 || fail "sqlite3 create/insert did not exit 0 (boot 1)"
