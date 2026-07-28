@@ -1234,6 +1234,14 @@ func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
     uartPutHex(UInt(read_elr_el1()))
     uartPuts(" FAR_EL1=")
     uartPutHex(UInt(read_far_el1()))
+    // SP_EL0/FP are what separate a stack overflow (SP has walked below the
+    // mapped stack, FAR tracks SP) from a wild store (SP still sane, FAR far
+    // away). Postmortem cannot reconstruct either from ESR/FAR alone.
+    let faultFrame = framePointer.assumingMemoryBound(to: UInt.self)
+    uartPuts(" SP_EL0=")
+    uartPutHex(faultFrame[31])
+    uartPuts(" FP=")
+    uartPutHex(faultFrame[29])
     uartPuts("\n")
     processTerminateBySignal(sig)
     // processTerminateBySignal does not return; guard against a future change.
