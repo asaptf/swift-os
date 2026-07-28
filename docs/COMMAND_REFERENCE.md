@@ -590,6 +590,28 @@ Notes:
 
 Acceptance coverage: `tests/swift_date_test.sh`.
 
+### `uptime`
+
+Print how long the system has been running.
+
+```text
+uptime
+```
+
+Examples:
+
+```sh
+uptime
+```
+
+Notes:
+
+- Output is `up [N day[s], ]H:MM:SS`.
+- The elapsed time comes from `SYS_SYSINFO` uptime ticks — the same source
+  `/bin/top` reports from — so it measures kernel time since boot, not wall clock.
+
+Acceptance coverage: `tests/uptime_test.sh`.
+
 ## Networking Commands
 
 Networking commands require a QEMU virtio-net device and `capNet`. The examples
