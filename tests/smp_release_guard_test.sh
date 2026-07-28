@@ -964,7 +964,7 @@ for needle in \
   'S4F-FORK-OK' \
   'S4F-SPAWN-OK' \
   'S4F-OK resource stress completed' \
-  'mmap(0, pageSize' \
+  'SYS_MMAP, 0, (long)pageSize' \
   'munmap(mem, pageSize)' \
   'pipe(fds)' \
   'fork()' \
@@ -985,7 +985,7 @@ fi
 for needle in \
   'SMP_CPUS="${SMP_CPUS:-4}"' \
   '-smp "$SMP_CPU_COUNT"' \
-  'await "S4F-OK resource stress completed"' \
+  'grep -qF "S4F-OK resource stress completed" "$LOG"' \
   '[I] smp: S2a OK: per-CPU timer heartbeat ready detail=$SMP_CPU_COUNT' \
   '[I] smp: S4e OK: network lock boundary stayed balanced'; do
   if ! grep -Fq -- "$needle" "$S4_STRESS_TEST"; then
