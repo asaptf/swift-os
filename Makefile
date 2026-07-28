@@ -2668,7 +2668,8 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/netinfo_test.sh
 	# IPv6 (net-ipv6 slice): host net_test covers the protocol core aggressively
 	# (NDP, RA, EH chains, DAD, malformed packets). QEMU smoke tests verify
-	# link-local/NDP setup; Darwin QEMU currently skips true IPv6 hostfwd echo.
+	# link-local/NDP setup; hosts that cannot bind IPv6 hostfwd (probe, not
+	# OS-name) fall back to that smoke instead of true hostfwd echo.
 	./tests/ipv6_smoke_test.sh
 	./tests/net_static_ipv6_test.sh
 	./tests/ipv6_udp_echo_test.sh

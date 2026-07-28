@@ -695,8 +695,9 @@ Current limits that matter during operation:
 - SMP hardening can boot and test multiple scheduler CPUs, including the S5f
   run-any placement gate, but production load balancing and CPU policy remain
   active hardening work.
-- IPv6 support exists in the stack and smoke tests, but Darwin/QEMU hostfwd
-  behavior can limit end-to-end host tests.
+- IPv6 support exists in the stack and smoke tests, but QEMU IPv6 hostfwd
+  (binding `[::1]`) may be unavailable on some hosts; echo tests probe that
+  capability and fall back to link-local/NDP smoke when needed.
 - Real virtio drivers and networking are still in the kernel; the roadmap moves
   more services out of the trusted core.
 

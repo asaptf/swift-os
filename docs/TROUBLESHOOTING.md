@@ -526,10 +526,12 @@ the QEMU command includes the expected UDP path. Use:
 
 ### IPv6 Host Forwarding Is Skipped
 
-On Darwin, QEMU/slirp IPv6 host forwarding can be unavailable or inconsistent.
-The test suite still validates the IPv6 protocol core and link-local smoke path.
-Treat skipped Darwin IPv6 hostfwd echo tests as host-environment limitations
-unless the protocol-core unit tests fail too.
+QEMU/slirp IPv6 host forwarding can be unavailable when the host cannot bind
+`[::1]` (common on Darwin and on some CI Linux runners). The IPv6 UDP echo
+harness probes that capability and falls back to the link-local/NDP smoke
+rather than reporting empty-serial assertion failures. The suite still validates
+the IPv6 protocol core and link-local smoke path. Treat a capability-probe skip
+as a host-environment limitation unless the protocol-core unit tests fail too.
 
 ## Package Problems
 
