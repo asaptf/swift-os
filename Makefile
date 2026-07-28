@@ -2713,6 +2713,10 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/datafs_test.sh
 	./tests/init_restart_rate_test.sh
 	./tests/datafs_fsync_test.sh
+# The prod base above is headless by design (swos-init supervises and never opens
+# a console session), but the tests below drive a serial login. Restore a default
+# base image while keeping $(DISK_IMG) — the /data disk the datafs/nginx tests need.
+	rm -f $(BASE_IMG); $(MAKE) base-image
 	./tests/datafs_sqlite_test.sh
 	./tests/nginx_test.sh
 	./tests/nginx_data_test.sh
