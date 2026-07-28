@@ -62,10 +62,18 @@ else
         NEWLIB_VERSION="$NEWLIB_VERSION"
 fi
 
-if [[ -f "$ROOT/build/busybox.elf" ]]; then
-    echo "==> ci-bootstrap: busybox.elf already present, skipping"
+# Presence alone is not enough: Actions restore-keys can rehydrate an older
+# busybox.elf whose mtime looks fresh. Content-stamp must match tree inputs.
+if [[ -f "$ROOT/build/busybox.elf" ]] \
+    && "$ROOT/scripts/busybox-inputs-hash.sh" --check >/dev/null 2>&1; then
+    echo "==> ci-bootstrap: busybox.elf present and inputs-hash matches, skipping"
 else
-    echo "==> ci-bootstrap: make busybox"
+    if [[ -f "$ROOT/build/busybox.elf" ]]; then
+        echo "==> ci-bootstrap: busybox.elf stale or unstamped (inputs changed or cache prefix fallback); rebuilding"
+        rm -f "$ROOT/build/busybox.elf" "$ROOT/build/busybox.inputs-hash"
+    else
+        echo "==> ci-bootstrap: make busybox"
+    fi
     make -C "$ROOT" busybox \
         BUSYBOX_VERSION="$BUSYBOX_VERSION"
 fi

@@ -4031,7 +4031,7 @@ $(SQLITE_BIN): $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/databas
 # W3: build the openssl static dev libs (and headers) for nginx TLS linking.
 # Tool prereqs are order-only so rebuilding swport/swpkg/pkgrepo does not force a
 # (slow) openssl recompile; only the recipe/script/libc actually trigger it.
-$(OPENSSL_DEV): scripts/build-openssl.sh ports/security/openssl/Port.json $(SYSROOT)/lib/libc.a | $(SWPORT) $(SWPKG) $(PKGREPO)
+$(OPENSSL_DEV): scripts/build-openssl.sh ports/security/openssl/Port.json $(SYSROOT)/lib/libc.a userland/compat/stubs.c userland/lib/newlib_syscalls.c userland/lib/crt0_newlib.S | $(SWPORT) $(SWPKG) $(PKGREPO)
 	./scripts/build-openssl.sh
 
 # W3: a build-time self-signed cert for the HTTPS demo (CN=swift-os, 10y).
@@ -4412,9 +4412,36 @@ newlib:
 busybox:
 	./scripts/build-busybox.sh
 
+# Content-hash freshness for busybox.elf. File mtimes alone are not enough: a
+# CI cache restore rewrites them, and a checked-in or leftover binary can sit
+# for months while userland/compat moves on. We refuse a missing or unstamped
+# or content-stale binary with a loud error rather than silently rebuilding
+# (rebuild needs newlib + network). Run `make busybox` to refresh.
+#
+# .BUSYBOX_INPUTS_FORCE re-runs the expected-hash recipe every make; the stamp
+# file is rewritten only when the hash value changes, so an up-to-date binary
+# is not spuriously marked out of date by a no-op hash recompute.
+.BUSYBOX_INPUTS_FORCE: ;
+$(BUILD)/busybox.inputs-expected: .BUSYBOX_INPUTS_FORCE | $(BUILD)/.dir
+	@./scripts/busybox-inputs-hash.sh >$@.tmp
+	@if ! cmp -s $@.tmp $@ 2>/dev/null; then mv $@.tmp $@; else rm -f $@.tmp; fi
+
 # busybox.elf is produced by `make busybox` (slow; needs newlib + network).
-$(BUILD)/busybox.elf:
-	@echo "busybox not built. Run: make busybox" >&2; exit 1
+# One shell (Make runs each recipe line separately — do not split the check).
+$(BUILD)/busybox.elf: $(BUILD)/busybox.inputs-expected
+	@if [ -f $@ ] && [ -f $(BUILD)/busybox.inputs-hash ] \
+	    && cmp -s $(BUILD)/busybox.inputs-hash $(BUILD)/busybox.inputs-expected; then \
+		exit 0; \
+	elif [ ! -f $@ ]; then \
+		echo "busybox not built. Run: make busybox" >&2; exit 1; \
+	elif [ ! -f $(BUILD)/busybox.inputs-hash ]; then \
+		echo "busybox is UNSTAMPED (no inputs-hash). Run: make busybox" >&2; exit 1; \
+	else \
+		echo "busybox is STALE (tree inputs changed since it was built). Run: make busybox" >&2; \
+		echo "  recorded: $$(tr -d '[:space:]' < $(BUILD)/busybox.inputs-hash)" >&2; \
+		echo "  expected: $$(cat $(BUILD)/busybox.inputs-expected)" >&2; \
+		exit 1; \
+	fi
 
 # NC1: cross-build static ncurses + the ncdemo proof binary.
 ncurses:
