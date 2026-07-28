@@ -15,6 +15,9 @@ DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 MSG="swos-ipv6-udp"
 
+# shellcheck source=tests/lib/ipv6_hostfwd.sh
+source "$ROOT/tests/lib/ipv6_hostfwd.sh"
+
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DISK" ]]; then
   ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || { echo "FAIL: cannot build base.img" >&2; exit 2; }
@@ -24,74 +27,11 @@ if [[ ! -f "$DTB" ]]; then
 fi
 command -v nc >/dev/null 2>&1 || { echo "FAIL: nc not found (needed to send the datagram)" >&2; exit 2; }
 
-# Netdev string shared by the capability probe and the real boot (IPv4 hostfwd
-# for the echo path plus the IPv6 hostfwd literals that many hosts cannot bind).
+# Netdev string for the real boot (IPv4 hostfwd for the echo path plus the IPv6
+# hostfwd literals that many hosts cannot bind).
 ipv6_udp_netdev() {  # ipv6_udp_netdev HOST_PORT_A HOST_PORT_B
   printf 'user,id=n0,ipv6=on,hostfwd=udp:127.0.0.1:%s-:5555,hostfwd=udp:[::1]:%s-:5555,hostfwd=udp:[::1]:%s-:5556' \
     "$1" "$1" "$2"
-}
-
-# Probe: does this QEMU accept and bind the IPv6 hostfwd rules? Narrow — only
-# treat an explicit hostfwd/bind refusal as "no capability". A live QEMU means
-# yes; any other probe failure is not a skip (the full body can still fail).
-# Prints a one-line reason on stdout when returning 1 (absent).
-probe_ipv6_hostfwd() {
-  local probe_log probe_pidfile qp n
-  local port_a=$((51000 + ($$ % 1000)))
-  local port_b=$((port_a + 1))
-  probe_log="$(mktemp -t swiftos-ipv6-udp-probe.XXXXXX)"
-  probe_pidfile="$(mktemp -t swiftos-ipv6-udp-probe-pid.XXXXXX)"
-
-  "$QEMU" -M virt -cpu cortex-a72 -m 64M -nographic -no-reboot \
-    -pidfile "$probe_pidfile" \
-    -netdev "$(ipv6_udp_netdev "$port_a" "$port_b")" \
-    -device virtio-net-device,netdev=n0 \
-    -kernel "$KERNEL" </dev/null >"$probe_log" 2>&1 &
-  qp=$!
-
-  n=0
-  while (( n < 40 )); do  # ~4s: hostfwd is decided at netdev setup, not after boot
-    if ! kill -0 "$qp" 2>/dev/null; then
-      wait "$qp" 2>/dev/null || true
-      # Match only hostfwd setup refusals for the IPv6 literals (not guest panics).
-      if grep -qiE \
-        "Invalid host forwarding rule.*\[::1\]|Could not set up host forwarding rule 'udp:\[::1\]|Bad host address" \
-        "$probe_log" 2>/dev/null
-      then
-        local reason
-        reason="$(grep -iE 'host forward|hostfwd|Bad host address' "$probe_log" | head -1 | sed 's/^[[:space:]]*//')"
-        [[ -n "$reason" ]] || reason="QEMU refused IPv6 hostfwd rule setup"
-        printf '%s\n' "$reason"
-        rm -f "$probe_log" "$probe_pidfile"
-        return 1
-      fi
-      # Died for some other reason — not a hostfwd capability skip.
-      rm -f "$probe_log" "$probe_pidfile"
-      return 0
-    fi
-    # Still running after a short settle: netdev (incl. hostfwd bind) succeeded.
-    if (( n >= 5 )); then
-      kill "$qp" 2>/dev/null || true
-      wait "$qp" 2>/dev/null || true
-      if [[ -f "$probe_pidfile" ]]; then
-        local ppid; ppid="$(cat "$probe_pidfile" 2>/dev/null || true)"
-        [[ -n "$ppid" ]] && { kill "$ppid" 2>/dev/null || true; kill -9 "$ppid" 2>/dev/null || true; }
-      fi
-      rm -f "$probe_log" "$probe_pidfile"
-      return 0
-    fi
-    sleep 0.1
-    n=$((n + 1))
-  done
-
-  kill "$qp" 2>/dev/null || true
-  wait "$qp" 2>/dev/null || true
-  if [[ -f "$probe_pidfile" ]]; then
-    local ppid; ppid="$(cat "$probe_pidfile" 2>/dev/null || true)"
-    [[ -n "$ppid" ]] && { kill "$ppid" 2>/dev/null || true; kill -9 "$ppid" 2>/dev/null || true; }
-  fi
-  rm -f "$probe_log" "$probe_pidfile"
-  return 0
 }
 
 skip_to_ipv6_smoke() {
@@ -105,7 +45,7 @@ skip_to_ipv6_smoke() {
 }
 
 PROBE_REASON=""
-if ! PROBE_REASON="$(probe_ipv6_hostfwd)"; then
+if ! PROBE_REASON="$(qemu_ipv6_hostfwd_available)"; then
   skip_to_ipv6_smoke "${PROBE_REASON:-QEMU refused IPv6 hostfwd}"
 fi
 

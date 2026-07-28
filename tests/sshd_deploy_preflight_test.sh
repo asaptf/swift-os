@@ -20,6 +20,9 @@ HOST_PORT="${SSHD_DEPLOY_HOST_PORT:-$((31000 + ($$ % 12000)))}"
 HOSTFWD_MODE="${SSHD_DEPLOY_IPV6_HOSTFWD:-auto}"
 EVIDENCE_DIR="${SSHD_DEPLOY_EVIDENCE_DIR:-}"
 
+# shellcheck source=tests/lib/ipv6_hostfwd.sh
+source "$ROOT/tests/lib/ipv6_hostfwd.sh"
+
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DTB" ]]; then
   ( cd "$ROOT" && make build/virt.dtb ) >/dev/null 2>&1 || { echo "FAIL: cannot build virt.dtb" >&2; exit 2; }
@@ -29,11 +32,14 @@ if [[ ! -x "$SSHKEY" ]]; then
 fi
 command -v "$SSH_KEYGEN" >/dev/null 2>&1 || { echo "FAIL: ssh-keygen not found" >&2; exit 2; }
 
+# Explicit HOSTFWD_MODE wins; only "auto" consults the IPv6 hostfwd capability probe.
 drive_openssh=1
 if [[ "$HOSTFWD_MODE" == "0" || "$HOSTFWD_MODE" == "off" || "$HOSTFWD_MODE" == "false" ]]; then
   drive_openssh=0
-elif [[ "$HOSTFWD_MODE" == "auto" && "$(uname -s)" == "Darwin" ]]; then
-  drive_openssh=0
+elif [[ "$HOSTFWD_MODE" == "auto" ]]; then
+  if ! qemu_ipv6_hostfwd_available >/dev/null; then
+    drive_openssh=0
+  fi
 fi
 if [[ "$drive_openssh" -eq 1 ]]; then
   command -v "$SSH" >/dev/null 2>&1 || { echo "FAIL: ssh client not found" >&2; exit 2; }

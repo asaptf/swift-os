@@ -4849,13 +4849,14 @@ slices: foundation, protocol, userland, tests, integration). This is the concret
 - **E2E QEMU tests (dedicated scripts, wired into make test).**
   - `tests/ipv6_smoke_test.sh`: boots with `-netdev user,ipv6=on`, reactive FIFO/await past M7, asserts
     "net: IPv6 link-local configured" + no panic. Early-boot only (foundation + NDP config path).
-  - `tests/ipv6_udp_echo_test.sh`: on Darwin, where QEMU rejects IPv6 hostfwd literals, requires the smoke
-    test above to pass and reports the AF_INET6 echo path as skipped. On QEMU builds with usable IPv6
-    hostfwd this script currently boots with `ipv6=on` and exercises an IPv4 UDP echo roundtrip while the
-    NIC is dual-stack, asserting link-local/NDP setup and no-crash behavior. True `/bin/udpecho 6` + `nc -6`
-    E2E remains a follow-up once the hostfwd transport is portable.
-  - `tests/ipv6_tcp_echo_test.sh`: analogous for TCP: Darwin falls back to the required smoke test; the
-    non-Darwin body currently validates TCP echo over IPv4 hostfwd under `ipv6=on` and keeps the AF_INET6
+  - `tests/ipv6_udp_echo_test.sh`: capability-probes whether this QEMU can bind IPv6 hostfwd (`[::1]`).
+    When the probe fails (common on Darwin and on Linux without usable IPv6), requires the smoke test
+    above and reports the AF_INET6 echo path as skipped. When hostfwd works, boots with `ipv6=on` and
+    exercises an IPv4 UDP echo roundtrip while the NIC is dual-stack, asserting link-local/NDP setup
+    and no-crash behavior. True `/bin/udpecho 6` + `nc -6` E2E remains a follow-up once the hostfwd
+    transport is portable. Shared probe: `tests/lib/ipv6_hostfwd.sh`.
+  - `tests/ipv6_tcp_echo_test.sh`: analogous for TCP: same shared capability probe + smoke fallback;
+    when hostfwd works, validates TCP echo over IPv4 hostfwd under `ipv6=on` and keeps the AF_INET6
     echo tightening point local to this script.
   All three run early in `make test` (after virtio_net, before v4 net tests). Host `net_test` remains the
   aggressive IPv6 protocol oracle; QEMU coverage proves link-local/NDP setup and dual-stack no-crash behavior
