@@ -9,6 +9,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -123,7 +125,7 @@ for _ in $(seq 1 30); do
 done
 
 # Wait for each stage's prompt before sending (reactive, not fixed sleeps).
-await "M7 tty: type a line then Enter" 40 && printf 'tty-line\n'     >&3
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" && printf 'tty-line\n'     >&3
 await "M7 tty: running; press Ctrl-C"  20 && printf '\003'           >&3
 await "swift-os login:"                20 && printf 'root\n'         >&3
 await "Password:"                      15 && printf 'swordfish\n'    >&3

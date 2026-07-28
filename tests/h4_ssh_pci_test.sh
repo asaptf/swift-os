@@ -15,6 +15,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt-gicv3.dtb"
 BASE_DISK="$ROOT/build/base.img"
@@ -98,7 +100,7 @@ exec 3<>"$INFIFO"
 # Confirm the NIC came up over PCI and got a lease before sshd is reachable.
 await "net-dhcp OK: lease" 120 || drive_fail "no DHCP lease over virtio-net-pci"
 # Drive past the interactive tty demo so the init program reaches sshd autostart.
-await "M7 tty: type a line then Enter" 120 && send_line 'tty-line'
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" && send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 60 && printf '\003' >&3
 await "swos-init: started sshd pid" 120 || drive_fail "swos-init did not start sshd"
 await "sshd: listening on 22" 120 || drive_fail "autostarted /bin/sshd did not listen"

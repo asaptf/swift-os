@@ -2,6 +2,8 @@
 # GDB probe: reent pointer at _setenv_r / __getreent during node startup.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt-2048.dtb"
 DISK="$ROOT/build/base.img"
@@ -47,7 +49,7 @@ qemu-system-aarch64 -M virt -cpu cortex-a72 -m 2048M -nographic -no-reboot -pidf
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 60 || { echo "no tty"; exit 2; }
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || { echo "no tty"; exit 2; }
 send 'x'
 await "M7 tty: running" 40 || true
 printf '\003' >&3

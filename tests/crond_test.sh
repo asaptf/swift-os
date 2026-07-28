@@ -24,6 +24,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -107,7 +109,7 @@ await "D1 OK: datafs mounted at /data" 90 || fail "datafs not mounted at /data"
 # Log in as root (same handoff the other base-image tests use). swos-init starts
 # the configured services (incl. crond) right after the tty demo, just before the
 # login prompt — so the system-crond assertions come after we reach the shell.
-await "M7 tty: type a line then Enter" 90 || fail "no tty line prompt"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || fail "no tty line prompt"
 send 'tty-line'
 await "M7 tty: running; press Ctrl-C" 60  || fail "no tty Ctrl-C prompt"
 printf '\003' >&3

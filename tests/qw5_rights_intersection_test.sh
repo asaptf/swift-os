@@ -10,6 +10,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -87,7 +89,7 @@ send_after() {  # send_after MARKER MAXSEC TEXT
 QP=$!
 exec 3<>"$INFIFO"
 
-send_after "M7 tty: type a line then Enter" 60 $'tty-line\n'
+send_after "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" $'tty-line\n'
 send_after "M7 tty: running; press Ctrl-C" 40 $'\003'
 send_after "swift-os login:" 60 $'root\n'
 send_after "Password:" 40 $'swordfish\n'

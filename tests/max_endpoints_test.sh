@@ -7,10 +7,11 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
-TIMEOUT="${TIMEOUT:-180}"
 MIN_ENDPOINTS=17
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
@@ -85,7 +86,7 @@ dtb_args=()
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" "$TIMEOUT" || drive_fail "timed out waiting for tty line prompt"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "timed out waiting for tty line prompt"
 printf 'tty-line\n' >&3
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "timed out waiting for tty Ctrl-C prompt"
 printf '\003' >&3

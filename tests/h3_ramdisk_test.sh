@@ -15,6 +15,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=scripts/host-tools.sh
 source "$ROOT/scripts/host-tools.sh"
 DISK_IMG="$ROOT/build/swift-os.img"
@@ -62,7 +64,7 @@ QP=$!
 exec 3<>"$IN"
 
 # Drive the interactive milestones the boot path runs before login.
-wait_for "M7 tty: type a line then Enter" 2400 && send_text $'tty-line\n'
+wait_for "M7 tty: type a line then Enter" $((DEMO_BOOT_TIMEOUT * 10)) && send_text $'tty-line\n'
 wait_for "M7 tty: running; press Ctrl-C" 600 && send_text $'\003'
 if wait_for "swift-os login:" 600; then
     send_text $'root\n'

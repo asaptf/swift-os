@@ -15,6 +15,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 BASE_IMG="$ROOT/build/base.img"
@@ -80,7 +82,7 @@ exec 3<>"$INFIFO"
 await "LM3b: model disk mounted read-only at /srv/models" 60 \
   || drive_fail "kernel did not report the model disk mounted at /srv/models"
 
-await "M7 tty: type a line then Enter" 60 || drive_fail "no tty line prompt"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "no tty line prompt"
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "no tty Ctrl-C prompt"
 printf '\003' >&3

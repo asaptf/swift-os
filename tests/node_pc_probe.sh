@@ -5,6 +5,8 @@
 # stuck (busy-loop in EL0 node code vs blocked in EL1 kernel). Not a CI gate.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="${NODE_DTB:-$ROOT/build/virt-2048.dtb}"
 DISK="$ROOT/build/base.img"
@@ -82,7 +84,7 @@ PY
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 60 || { echo "no tty prompt"; sed 's/\r//' "$LOG"|tail -20; exit 2; }
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || { echo "no tty prompt"; sed 's/\r//' "$LOG"|tail -20; exit 2; }
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || { echo "no ctrlc prompt"; exit 2; }
 printf '\003' >&3

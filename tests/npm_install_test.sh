@@ -4,6 +4,8 @@
 # HTTP registry fixture via slirp gateway 10.0.2.2.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="${NODE_DTB:-$ROOT/build/virt-2048.dtb}"
 DISK="$ROOT/build/base.img"
@@ -90,7 +92,7 @@ SMP="${NODE_QEMU_SMP:-1}"
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 60 || drive_fail "no tty line prompt"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "no tty line prompt"
 send_line 'x'
 await "M7 tty: running" 40 || drive_fail "no tty Ctrl-C prompt"
 printf '\003' >&3

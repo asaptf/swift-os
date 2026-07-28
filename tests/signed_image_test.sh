@@ -18,6 +18,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -133,7 +135,7 @@ send_line() {
 
 # Drive the boot demo past the interactive ttydemo to a root shell.
 to_shell() {
-  await "M7 tty: type a line then Enter" 60 || return 1
+  await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || return 1
   send_line 'tty-line'
   await "M7 tty: running; press Ctrl-C" 40 || return 1
   printf '\003' >&3

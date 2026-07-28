@@ -17,6 +17,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 BASE="$ROOT/build/base.img"
@@ -84,7 +86,7 @@ send_line() {
 # Counts from $3: the ordinal of the M7 prompt to wait for (1 on first boot, 2 after a reboot).
 to_shell() { # to_shell USER PASSWORD PROMPT_ORDINAL
   local u="$1" pw="$2" ord="$3"
-  await_count "M7 tty: type a line then Enter" "$ord" 60 || return 1
+  await_count "M7 tty: type a line then Enter" "$ord" "$DEMO_BOOT_TIMEOUT" || return 1
   send_line 'tty-line'
   await_count "M7 tty: running; press Ctrl-C" "$ord" 40 || return 1
   printf '\003' >&3
@@ -110,7 +112,7 @@ if to_shell root swordfish 1; then
   send_line '/bin/reboot'
   await "power: rebooting now" 60 || fail "A: kernel did not issue PSCI SYSTEM_RESET"
   # The machine must actually reset: the boot flow reaches its prompts a 2nd time.
-  if await_count "M7 tty: type a line then Enter" 2 90; then
+  if await_count "M7 tty: type a line then Enter" 2 "$DEMO_BOOT_TIMEOUT"; then
     : # rebooted
   else
     fail "A: machine did not reboot (no second boot)"

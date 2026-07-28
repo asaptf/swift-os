@@ -4,6 +4,8 @@
 # V8 ThreadId vs mutex_owner (confirms context-switch TLS hypothesis).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"; DTB="$ROOT/build/virt-2048.dtb"; DISK="$ROOT/build/base.img"
 GDB=/opt/homebrew/bin/aarch64-elf-gdb
 LOG=/tmp/npm_gdb_serial.log; GOUT=/tmp/npm_gdb_out.log; : >"$LOG"; : >"$GOUT"
@@ -22,7 +24,7 @@ qemu-system-aarch64 -M virt -cpu cortex-a72 -m 2048M -nographic -no-reboot -pidf
   -gdb tcp::1234 -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!; echo "$QP" >"$PIDFILE"; exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 60 || { echo "no tty prompt"; exit 1; }
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || { echo "no tty prompt"; exit 1; }
 send 'x'; await "M7 tty: running" 40; printf '\003' >&3
 await "swift-os login:" 90 || { echo "no login"; exit 1; }
 send 'root'; await "Password:" 30; send 'swordfish'

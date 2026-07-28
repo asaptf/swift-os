@@ -4,6 +4,8 @@
 # Smoke: `node --version` prints the version; `node -e` runs JS through V8.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="${NODE_DTB:-$ROOT/build/virt.dtb}"
 DISK="$ROOT/build/base.img"
@@ -63,7 +65,7 @@ send_line() {
 QP=$!
 exec 3<>"$INFIFO"
 
-await "M7 tty: type a line then Enter" 60 || drive_fail "no tty line prompt"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "no tty line prompt"
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 40 || drive_fail "no tty Ctrl-C prompt"
 printf '\003' >&3

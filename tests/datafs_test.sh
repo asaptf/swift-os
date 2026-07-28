@@ -10,6 +10,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 BASE_IMG="$ROOT/build/base.img"
@@ -83,7 +85,7 @@ start_boot() {  # start_boot LOGFILE INFIFO
 }
 
 login() {  # walk the boot tty + login prompts to a root busybox shell
-  await "M7 tty: type a line then Enter" 60 || fail "no tty line prompt"
+  await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || fail "no tty line prompt"
   send 'tty-line'
   await "M7 tty: running; press Ctrl-C" 40 || fail "no tty Ctrl-C prompt"
   printf '\003' >&3; sleep 0.15

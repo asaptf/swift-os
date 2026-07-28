@@ -13,6 +13,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -64,7 +66,7 @@ launch() {  # start a fresh QEMU sharing DATA_IMG
 }
 
 reach_login() {  # drive past the boot tty probe to the first login prompt; 2 = boot failed
-  await "M7 tty: type a line then Enter" 60 || return 2
+  await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || return 2
   send_line 'tty-line'
   await "M7 tty: running; press Ctrl-C" 40 || return 2
   printf '\003' >&3

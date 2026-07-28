@@ -13,11 +13,12 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 SMP_CPUS="${SMP_CPUS:-4}"
-TIMEOUT="${TIMEOUT:-420}"
 
 if [[ ! "$SMP_CPUS" =~ ^[0-9]+$ ]] || (( 10#$SMP_CPUS < 2 )); then
   echo "FAIL: SMP_CPUS must be >= 2 for LM2, got '$SMP_CPUS'." >&2
@@ -97,7 +98,7 @@ QP=$!
 exec 3<>"$INFIFO"
 
 # SMP demos (S5a–S5g) lengthen boot; give the tty demo generous time.
-await "M7 tty: type a line then Enter" 180 || drive_fail "tty demo did not become ready"
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || drive_fail "tty demo did not become ready"
 send_line 'tty-line'
 await "M7 tty: running; press Ctrl-C" 60 || drive_fail "tty demo did not accept input"
 printf '\003' >&3

@@ -12,6 +12,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=scripts/host-tools.sh
 source "$ROOT/scripts/host-tools.sh"
 KERNEL="$ROOT/build/kernel.elf"; DTB="$ROOT/build/virt.dtb"; DISK="$ROOT/build/base.img"
@@ -69,7 +71,7 @@ paste_pem(){ send_line "cat > $1 <<'PEMEOF'"; while IFS= read -r ln; do send_lin
   -netdev user,id=n0 -device virtio-net-device,netdev=n0 -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!; exec 3<>"$INFIFO"
 
-require_await "M7 tty: type a line then Enter" 60; send_line 'tty-line'
+require_await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT"; send_line 'tty-line'
 require_await "M7 tty: running; press Ctrl-C" 40; printf '\003' >&3
 require_await "swift-os login:" 40; send_line 'root'
 require_await "Password:" 30; send_line 'swordfish'

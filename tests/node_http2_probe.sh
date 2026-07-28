@@ -2,6 +2,8 @@
 # Quick probe: require('http2') triggers nghttp2 calloc/malloc paths.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="${NODE_DTB:-$ROOT/build/virt-2048.dtb}"
 DISK="$ROOT/build/base.img"
@@ -30,7 +32,7 @@ await() { local m="$1" n=0; while (( n < 600 )); do grep -qF "$m" "$LOG" 2>/dev/
   grep -qE 'EL0 fault|signal 0x000000000000000B' "$LOG" 2>/dev/null && return 2; sleep 0.1; n=$((n+1)); done; return 1; }
 send() { printf '%s\n' "$1" >&3; sleep 0.15; }
 
-await "M7 tty: type a line then Enter" 60 || { echo FAIL:boot; exit 2; }
+await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || { echo FAIL:boot; exit 2; }
 send 'x'; await "M7 tty: running" 40 || true; printf '\003' >&3
 await "swift-os login:" 90 || { echo FAIL:login; exit 2; }
 send 'root'; await "Password:" 30 || true; send 'swordfish'
