@@ -31,12 +31,16 @@ jobs:
             sysroot
             models
             build/busybox.elf
+            build/busybox.inputs-hash
             build/nginx-root
             build/sqlite-root
             build/openssl-root
             build/nginx-certs
             build/swport-distfiles
-          key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/build-nginx.sh', 'scripts/build-sqlite.sh', 'scripts/build-openssl.sh') }}
+          # Include tree-owned busybox/runtime sources. restore-keys may still
+          # rehydrate an older busybox; ci-bootstrap refuses it unless
+          # build/busybox.inputs-hash matches scripts/busybox-inputs-hash.sh.
+          key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/busybox-inputs-hash.sh', 'scripts/build-nginx.sh', 'scripts/build-sqlite.sh', 'scripts/build-openssl.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**') }}
           restore-keys: |
             bootstrap-${{ runner.os }}-${{ runner.arch }}-
 
@@ -68,12 +72,16 @@ jobs:
             sysroot
             models
             build/busybox.elf
+            build/busybox.inputs-hash
             build/nginx-root
             build/sqlite-root
             build/openssl-root
             build/nginx-certs
             build/swport-distfiles
-          key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/build-nginx.sh', 'scripts/build-sqlite.sh', 'scripts/build-openssl.sh') }}
+          # Include tree-owned busybox/runtime sources. restore-keys may still
+          # rehydrate an older busybox; ci-bootstrap refuses it unless
+          # build/busybox.inputs-hash matches scripts/busybox-inputs-hash.sh.
+          key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/busybox-inputs-hash.sh', 'scripts/build-nginx.sh', 'scripts/build-sqlite.sh', 'scripts/build-openssl.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**') }}
           restore-keys: |
             bootstrap-${{ runner.os }}-${{ runner.arch }}-
 

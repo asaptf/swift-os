@@ -3,6 +3,27 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## malloc lock depth: no `__thread` / emutls (2026-07-28)
+
+**Toolchain limitation.** For the bare-metal `aarch64-elf` target used by
+busybox (`scripts/build-busybox.sh`), GCC often lowers `__thread` to **libgcc
+emulated TLS** (`__emutls_get_address`). The shipped busybox can carry an empty
+TLS program header; emutls then allocates its block **with malloc** on first
+touch. Putting newlib's malloc lock recursion depth in `__thread` therefore
+recurses on the first `malloc` in the process (`malloc → _malloc_r →
+__malloc_lock → __emutls_get_address → malloc → …`), burns the EL0 stack, and
+dies with SIGSEGV — seen as nightly `tests/smp_resource_stress_test.sh` login
+shell death.
+
+**Fix.** Depth lives in the 16-byte TCB that `__swos_tls_setup` installs at
+`tpidr_el0` (offset 8). Reachable without malloc and independent of which TLS
+dialect the compiler picks. Still per-thread (main via crt0 static block;
+workers via the pthread_create trampoline TLS block). Do not regress to a
+global cached-owner design — that broke under SMP.
+
+**Gate.** `make malloc-lock-tls-test` / `tests/malloc_lock_tls_test.sh` (source
++ busybox symbol/disasm + SMP runtime with `/bin/malloclockprobe`).
+
 ## Easy local follow-ups — tcpget-by-name, maxEndpoints, httpd keep-alive (2026-07-10)
 
 Landed three deferred easy items without hardware or external registries:

@@ -102,5 +102,10 @@ $GCC -nostartfiles -nostdlib -T "$ROOT/userland/user_newlib.ld" -Wl,-z,max-page-
         -L "$SYSROOT/lib" -lc -lm -lgcc -Wl,--end-group \
     -o "$ROOT/build/busybox.elf"
 
+# Content stamp so Makefile / CI refuse a binary whose tree-owned inputs moved
+# (mtimes alone are unreliable after Actions cache restore).
+"$ROOT/scripts/busybox-inputs-hash.sh" >"$ROOT/build/busybox.inputs-hash"
+
 echo "Built $ROOT/build/busybox.elf"
+echo "inputs-hash $(cat "$ROOT/build/busybox.inputs-hash")"
 aarch64-elf-readelf -h "$ROOT/build/busybox.elf" | grep -E 'Type:|Entry'

@@ -786,22 +786,52 @@ static void futex_unlock_word(unsigned int *word) {
 
 /* newlib malloc is shared across pthreads (Node/V8/libuv). Without these hooks
  * concurrent allocators corrupt the heap once futex-backed blocking works.
- * Recursion depth is per-thread TLS (not a global owner pid): on SMP a stale
- * cached owner let a second thread re-enter malloc without taking the lock
- * (intermittent SIGSEGV in _malloc_r/_free_r during npm install). */
+ *
+ * Recursion depth must be per-thread (not a global cached owner): on SMP a
+ * stale owner let a second thread re-enter malloc without taking the lock
+ * (intermittent SIGSEGV in _malloc_r/_free_r during npm install).
+ *
+ * Do NOT use __thread for the depth counter. On aarch64-elf bare metal, GCC
+ * often lowers __thread to libgcc emulated TLS (__emutls_get_address), which
+ * allocates its block with malloc — so the first process malloc becomes:
+ *   malloc → _malloc_r → __malloc_lock → __emutls_get_address → malloc → …
+ * and burns the EL0 stack. Store the depth in the 16-byte TCB that
+ * __swos_tls_setup installs at tpidr_el0 (layout owned by newlib_syscalls.c):
+ *   [0..7]  self/dtv pointer
+ *   [8..11] malloc lock recursion depth (this slot)
+ *   [12..15] reserved
+ * crt0 / pthread_trampoline set tpidr_el0 before any malloc can run. */
 static unsigned int malloc_heap_lock;
-static __thread unsigned int malloc_lock_depth;
+
+#define SWOS_TCB_MALLOC_DEPTH_OFF 8
+
+/* Fallback for a process with no TLS block: the kernel enters EL0 with
+ * tpidr_el0 = 0 (user_entry.S) and __swos_init_tls silently skips setup when the
+ * .tdata/.tbss template exceeds SWOS_MAIN_TLS_CAP. Without this, the TCB slot
+ * would resolve to address 8 and the first malloc would die on a NULL store.
+ * A global is correct in that state: threads only exist once pthread_create has
+ * installed a per-thread block, so a TLS-less process is single-threaded. */
+static unsigned int malloc_lock_depth_no_tls;
+
+static unsigned int *swos_malloc_lock_depth(void) {
+    unsigned char *tp;
+    __asm__ volatile("mrs %0, tpidr_el0" : "=r"(tp));
+    if (tp == 0) { return &malloc_lock_depth_no_tls; }
+    return (unsigned int *)(tp + SWOS_TCB_MALLOC_DEPTH_OFF);
+}
 
 void __malloc_lock(struct _reent *reent) {
     (void)reent;
-    if (malloc_lock_depth++ != 0) { return; }
+    unsigned int *depth = swos_malloc_lock_depth();
+    if ((*depth)++ != 0) { return; }
     futex_lock_word(&malloc_heap_lock);
 }
 
 void __malloc_unlock(struct _reent *reent) {
     (void)reent;
-    if (malloc_lock_depth == 0) { return; }
-    if (--malloc_lock_depth != 0) { return; }
+    unsigned int *depth = swos_malloc_lock_depth();
+    if (*depth == 0) { return; }
+    if (--(*depth) != 0) { return; }
     futex_unlock_word(&malloc_heap_lock);
 }
 
@@ -1187,9 +1217,9 @@ static void pthread_trampoline(unsigned long arg) {
     while (atomic_load_u32(&rec->tid) == 0) {
         (void)futex_raw(&rec->tid, COMPAT_FUTEX_WAIT, 0);
     }
-    // TLS was reserved in pthread_create; without a per-thread block, __thread
-    // vars (including malloc_lock_depth) alias the main thread's TLS and heap
-    // locks become no-ops across workers — intermittent _malloc_r SIGSEGV.
+    // TLS was reserved in pthread_create; without a per-thread block, every
+    // worker shares the main thread's tpidr_el0 (including the TCB malloc-lock
+    // depth slot) and heap locks become no-ops — intermittent _malloc_r SIGSEGV.
     if (!rec->tls_block) { pthread_exit(0); }
     __swos_tls_setup(rec->tls_block);
     void *retval = rec->start(rec->arg);
