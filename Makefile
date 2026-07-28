@@ -632,6 +632,7 @@ USER_MV_ELF := $(BUILD)/mv.elf
 USER_CHMOD_ELF := $(BUILD)/chmod.elf
 USER_CHOWN_ELF := $(BUILD)/chown.elf
 USER_DATE_ELF := $(BUILD)/date.elf
+USER_UPTIME_ELF := $(BUILD)/uptime.elf
 USER_CROND_ELF := $(BUILD)/crond.elf
 USER_CALC_ELF := $(BUILD)/calc.elf
 USER_KV_ELF := $(BUILD)/kv.elf
@@ -730,6 +731,7 @@ BASE_EXEC_ELFS := \
 	$(USER_CHMOD_ELF) \
 	$(USER_CHOWN_ELF) \
 	$(USER_DATE_ELF) \
+	$(USER_UPTIME_ELF) \
 	$(USER_CROND_ELF) \
 	$(USER_HELLO_ELF) \
 	$(USER_SWOSINIT_ELF) \
@@ -1194,6 +1196,9 @@ $(BUILD)/user_chown.o: userland/chown.swift userland/lib/swift_user.h Makefile |
 $(BUILD)/user_date.o: userland/date.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/date.swift -o $@
 
+$(BUILD)/user_uptime.o: userland/uptime.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
+	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/uptime.swift -o $@
+
 $(BUILD)/user_crond.o: userland/crond.swift userland/lib/swift_user.h Makefile | $(BUILD)/.dir
 	$(SWIFTC) $(USER_SWIFT_FLAGS) -c userland/crond.swift -o $@
 
@@ -1617,6 +1622,9 @@ $(USER_CHOWN_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user
 
 $(USER_DATE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_date.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_date.o -o $@
+
+$(USER_UPTIME_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_uptime.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_uptime.o -o $@
 
 $(USER_CROND_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_crond.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_swift_user.o $(BUILD)/user_crond.o -o $@
@@ -2759,6 +2767,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	./tests/swift_chmodown_test.sh
 	./tests/swift_headwc_test.sh
 	./tests/swift_date_test.sh
+	./tests/uptime_test.sh
 	./tests/clock_test.sh
 	./tests/mprotect_test.sh
 	./tests/largemmap_test.sh
@@ -4373,6 +4382,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_CHMOD_ELF) $(BASE_ROOT)/bin/chmod
 	cp $(USER_CHOWN_ELF) $(BASE_ROOT)/bin/chown
 	cp $(USER_DATE_ELF) $(BASE_ROOT)/bin/date
+	cp $(USER_UPTIME_ELF) $(BASE_ROOT)/bin/uptime
 	cp $(USER_CROND_ELF) $(BASE_ROOT)/bin/crond
 	cp $(USER_CALC_ELF) $(BASE_ROOT)/bin/calc
 	cp $(USER_LLM_ELF) $(BASE_ROOT)/bin/llm
