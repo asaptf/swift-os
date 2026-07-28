@@ -805,9 +805,18 @@ static unsigned int malloc_heap_lock;
 
 #define SWOS_TCB_MALLOC_DEPTH_OFF 8
 
+/* Fallback for a process with no TLS block: the kernel enters EL0 with
+ * tpidr_el0 = 0 (user_entry.S) and __swos_init_tls silently skips setup when the
+ * .tdata/.tbss template exceeds SWOS_MAIN_TLS_CAP. Without this, the TCB slot
+ * would resolve to address 8 and the first malloc would die on a NULL store.
+ * A global is correct in that state: threads only exist once pthread_create has
+ * installed a per-thread block, so a TLS-less process is single-threaded. */
+static unsigned int malloc_lock_depth_no_tls;
+
 static unsigned int *swos_malloc_lock_depth(void) {
     unsigned char *tp;
     __asm__ volatile("mrs %0, tpidr_el0" : "=r"(tp));
+    if (tp == 0) { return &malloc_lock_depth_no_tls; }
     return (unsigned int *)(tp + SWOS_TCB_MALLOC_DEPTH_OFF);
 }
 
