@@ -452,6 +452,7 @@ make smp-test
 make smp-headroom-test
 make smp-uefi-test
 make s4-resource-stress-test
+make el0-fault-backtrace-test
 make qemu-virt-hardware-map-test
 make smp-cpu-utilization-test
 make s5-scheduler-placement-test

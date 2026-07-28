@@ -1243,6 +1243,12 @@ func syncLowerELAArch64Handler(_ framePointer: UnsafeMutableRawPointer) {
     uartPuts(" FP=")
     uartPutHex(faultFrame[29])
     uartPuts("\n")
+    // Bounded user FP-chain dump (AAPCS64). Collapses consecutive identical LRs
+    // so a runaway recursion is visible as one repeated entry with a count.
+    // Reads user memory only through userReadableBuffer; a bad chain ends the
+    // dump, never panics EL1. Does not change the first-line prefix up through
+    // FAR_EL1 (tests match that line).
+    logEl0UserBacktrace(fp: faultFrame[29])
     processTerminateBySignal(sig)
     // processTerminateBySignal does not return; guard against a future change.
     while true {}
