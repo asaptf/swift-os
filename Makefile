@@ -377,6 +377,7 @@ USER_MMAPRESERVEPROBE_ELF := $(BUILD)/mmapreserveprobe.elf
 USER_MAPFIXEDPROBE_ELF := $(BUILD)/mapfixedprobe.elf
 USER_PTHREADPROBE_ELF := $(BUILD)/pthreadprobe.elf
 USER_FUTEXPROBE_ELF := $(BUILD)/futexprobe.elf
+USER_MALLOCLOCKPROBE_ELF := $(BUILD)/malloclockprobe.elf
 USER_THREADSYNCPROBE_ELF := $(BUILD)/threadsyncprobe.elf
 USER_SELECTPROBE_ELF := $(BUILD)/selectprobe.elf
 USER_EVENTFDPROBE_ELF := $(BUILD)/eventfdprobe.elf
@@ -746,6 +747,7 @@ BASE_EXEC_ELFS := \
 	$(USER_MAPFIXEDPROBE_ELF) \
 	$(USER_PTHREADPROBE_ELF) \
 	$(USER_FUTEXPROBE_ELF) \
+	$(USER_MALLOCLOCKPROBE_ELF) \
 	$(USER_THREADSYNCPROBE_ELF) \
 	$(USER_SELECTPROBE_ELF) \
 	$(USER_EVENTFDPROBE_ELF) \
@@ -1755,6 +1757,12 @@ $(BUILD)/n_futexprobe.o: userland/futexprobe.c userland/compat/pthread.h Makefil
 $(USER_FUTEXPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_futexprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
 	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_futexprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
 
+$(BUILD)/n_malloclockprobe.o: userland/malloclockprobe.c userland/compat/pthread.h Makefile | $(BUILD)/.dir
+	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
+
+$(USER_MALLOCLOCKPROBE_ELF): $(BUILD)/n_crt0.o $(BUILD)/n_malloclockprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o userland/user_newlib.ld $(SYSROOT)/lib/libc.a Makefile
+	$(NEWLIB_GCC) $(NEWLIB_LDFLAGS) $(BUILD)/n_crt0.o $(BUILD)/n_malloclockprobe.o $(BUILD)/n_syscalls.o $(BUILD)/n_compat_stubs.o $(NEWLIB_LIBS) -o $@
+
 $(BUILD)/n_threadsyncprobe.o: userland/threadsyncprobe.c userland/compat/pthread.h userland/compat/semaphore.h Makefile | $(BUILD)/.dir
 	$(NEWLIB_GCC) $(NEWLIB_COMPAT_CFLAGS) $< -o $@
 
@@ -2647,6 +2655,7 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/s4_resource_stress_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_resource_stress_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/malloc_lock_tls_test.sh
 	SMP_CPUS=1 SMP_DTB=$(QEMU_DTB) ./tests/saturation_test.sh
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_race_stress_test.sh
 	SMP_CPUS=1 SMP_DTB=$(QEMU_DTB) ./tests/edge_stress_test.sh
@@ -3208,6 +3217,11 @@ pthread-test: build $(QEMU_DTB) base-image
 # 16-slot wait table full -> EAGAIN). Runs at -smp 4 so the slot-table races matter.
 futex-test: build $(QEMU_DTB_SMP4) base-image
 	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/futex_test.sh
+
+# Guard: malloc lock depth must not ride compiler/emulated TLS (busybox first-malloc).
+.PHONY: malloc-lock-tls-test
+malloc-lock-tls-test: build $(QEMU_DTB_SMP4) base-image $(BUILD)/n_compat_stubs.o
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/malloc_lock_tls_test.sh
 
 threadsync-test: build $(QEMU_DTB) base-image
 	./tests/threadsync_test.sh
@@ -4250,6 +4264,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_MAPFIXEDPROBE_ELF) $(BASE_ROOT)/bin/mapfixedprobe
 	cp $(USER_PTHREADPROBE_ELF) $(BASE_ROOT)/bin/pthreadprobe
 	cp $(USER_FUTEXPROBE_ELF) $(BASE_ROOT)/bin/futexprobe
+	cp $(USER_MALLOCLOCKPROBE_ELF) $(BASE_ROOT)/bin/malloclockprobe
 	cp $(USER_THREADSYNCPROBE_ELF) $(BASE_ROOT)/bin/threadsyncprobe
 	cp $(USER_SELECTPROBE_ELF) $(BASE_ROOT)/bin/selectprobe
 	cp $(USER_EVENTFDPROBE_ELF) $(BASE_ROOT)/bin/eventfdprobe

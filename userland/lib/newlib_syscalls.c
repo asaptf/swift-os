@@ -189,6 +189,12 @@ unsigned long __swos_tls_blocksize(void) {
 // Lay out a TLS block at `blk` (16-aligned, >= __swos_tls_blocksize bytes) for
 // the current thread and point tpidr_el0 at it: [16B TCB][.tdata copy][zeroed
 // .tbss]. Used for both the main thread (static block) and created threads.
+//
+// TCB layout (must stay in sync with stubs.c SWOS_TCB_MALLOC_DEPTH_OFF):
+//   [0..7]   self/dtv pointer (variant I)
+//   [8..11]  malloc lock recursion depth — allocation-free per-thread slot so
+//            __malloc_lock never touches compiler TLS / libgcc emutls
+//   [12..15] reserved
 void __swos_tls_setup(void *blk) {
     unsigned long filesz = (unsigned long)(__tdata_end - __tdata_start);
     unsigned long memsz  = (unsigned long)(__tbss_end - __tdata_start);
@@ -197,6 +203,7 @@ void __swos_tls_setup(void *blk) {
     for (; i < filesz; i++) { tp[16 + i] = ((const unsigned char *)__tdata_start)[i]; }
     for (; i < memsz; i++) { tp[16 + i] = 0; }
     *(void **)tp = (void *)tp;   // TCB self/dtv slot (variant I)
+    *(unsigned int *)(tp + 8) = 0;  // malloc lock depth (stubs.c)
     __asm__ volatile("msr tpidr_el0, %0" :: "r"(tp) : "memory");
 }
 

@@ -1154,6 +1154,7 @@ diagnostic fixtures than stable application interfaces.
 | --- | --- | --- | --- |
 | `threadsdemo` | `threadsdemo` | Create EL0 threads and prove futex-backed synchronization. | `tests/threads_test.sh` |
 | `pthreadprobe` | `pthreadprobe` | Exercise the C/newlib pthread facade over thread_create and futex. | `tests/pthread_test.sh` |
+| `malloclockprobe` | `malloclockprobe` | First-malloc + concurrent heap stress through the newlib compat malloc lock (TCB-slot depth, no emutls). | `tests/malloc_lock_tls_test.sh` |
 | `threadsyncprobe` | `threadsyncprobe` | Exercise C/newlib POSIX semaphores and pthread read/write locks. | `tests/threadsync_test.sh` |
 | `selectprobe` | `selectprobe` | Exercise C/newlib `select` and `pselect` over the poll backend. | `tests/select_test.sh` |
 | `eventfdprobe` | `eventfdprobe` | Exercise C/newlib eventfd counters and poll/select readiness. | `tests/eventfd_test.sh` |
@@ -1682,6 +1683,7 @@ are not the primary operator interface.
 | `mmapreserveprobe` | newlib compat `mmap(PROT_NONE)`, `MAP_NORESERVE`, `mprotect` commit/decommit, and reserved-region RW->RX execution. | Yes, when validating C runtime lazy-reservation compatibility. | `tests/mmapreserve_test.sh` |
 | `mapfixedprobe` | newlib compat `MAP_FIXED`, `MAP_FIXED_NOREPLACE`, guard-page recommit, fixed-region replacement, and RW->RX execution. | Yes, when validating C runtime fixed-address mmap compatibility. | `tests/mapfixed_test.sh` |
 | `pthreadprobe` | newlib compat `pthread_create`, `pthread_join`, mutexes, condition variables, once, and thread-specific data. | Yes, when validating C runtime threading compatibility. | `tests/pthread_test.sh` |
+| `malloclockprobe` | First malloc on the main thread plus concurrent `malloc`/`free` from worker threads through the newlib compat heap lock (per-thread depth in the TCB, not `__thread`/emutls). | Yes, when validating the malloc lock TLS fix under SMP. | `tests/malloc_lock_tls_test.sh` |
 | `threadsyncprobe` | newlib compat `sem_init`, `sem_wait`, `sem_post`, `sem_timedwait`, and `pthread_rwlock_*`. | Yes, when validating C runtime synchronization compatibility. | `tests/threadsync_test.sh` |
 | `selectprobe` | newlib compat `select`, `pselect`, and `fd_set` readiness over pipes. | Yes, when validating C runtime event-loop compatibility. | `tests/select_test.sh` |
 | `eventfdprobe` | newlib compat `eventfd`, `eventfd_read`, `eventfd_write`, and readiness over poll/select. | Yes, when validating C runtime event notification compatibility. | `tests/eventfd_test.sh` |
@@ -1728,6 +1730,7 @@ are not the primary operator interface.
 | `satstress` | Fixed-size kernel-pool saturation: each bounded pool (processes, per-process fds, pipes, IPC endpoints) saturates with a clean negative errno rather than a panic, and returns to a usable baseline after release (no slot leak); a tmpfs vnode create/unlink churn stays balanced. | Yes, but prefer the make target. | `tests/saturation_test.sh` |
 | `smprace` | Concurrent cross-CPU resource churn: N copies placed on different CPUs (S5f run-any) hammer the shared frame allocator, VFS/tmpfs, and pipe pools at once; the kernel asserts the S4 lock-boundary guards stay balanced and `pmm_free_count` returns to baseline after every copy is reaped. | Usually launched by the kernel/test harness under `-smp 4`. | `tests/smp_race_stress_test.sh` |
 | `futexprobe` | TH8 raw `SYS_FUTEX` boundaries: `FUTEX_WAIT` with `*uaddr != val` returns 0 without blocking, `FUTEX_WAKE` with no waiters returns 0 without faulting, and one word with several waiters wakes every waiter with no lost wakeup across CPUs (built for `-smp 4`). | Yes, when validating futex boundaries. | `tests/futex_test.sh` |
+| `malloclockprobe` | First-malloc + multi-thread heap churn through `__malloc_lock` / `__malloc_unlock` (guards the malloc↔emutls recursion fix). | Yes, when validating the TCB-slot malloc lock depth under `-smp 4`. | `tests/malloc_lock_tls_test.sh` |
 | `mountprobe` | V3 runtime `SYS_mount` / `SYS_unmount` driver: mounts a datafs volume by UUID or label at `/mnt/<name>`, exercises `RO`/`PERSIST`/`FORMAT_IF_BLANK` flags, and reports raw return codes for the boot gate. | Yes, for datafs mount diagnostics. | `make v3-mount-test`, `make v3-persist-test`, `make v3-deny-test` |
 | `procmaxprobe` | Process-table growth: forks more than the old 64-slot cap in `globalCell`, parks children on a pipe barrier, then reaps them and proves no slot leak. | Usually launched by the boot test harness. | `make procmax-test` |
 | `simdprobe` | LM1b int8 NEON codegen check: compares forced-scalar and explicit `SIMD16<Int8>` dot products over runtime-seeded data and reports `OK`/`MISMATCH`. | Yes, when validating NEON inference paths. | `tests/simdprobe_test.sh` |
