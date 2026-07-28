@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # saturation_test.sh - fixed-size kernel-pool saturation smoke.
 #
-# Boots, logs in as root, and runs /bin/satstress, which drives the bounded
-# kernel resource pools (processes, per-process fds, pipes, IPC endpoints) to
-# their ceiling and back, plus a balanced vnode create/unlink churn. The pass
-# condition is twofold: every pool must refuse gracefully at its cap (a clean
-# negative errno, NOT a panic) AND recover afterwards (no slot leak). Defaults
-# to single-core (the cap logic is not SMP-specific); set SMP_CPUS=N to also
-# exercise the S4 pool locks while secondaries are online and ticking.
+# Boots, logs in as root, and runs /bin/satstress, which drives the still-
+# bounded kernel resource pools (per-process fds, pipes, IPC endpoints) to
+# their ceiling and back, exercises process-table growth past the initial
+# slot capacity (the table is growable; fork refusal is not asserted), plus a
+# balanced vnode create/unlink churn. For bounded pools the pass condition is
+# twofold: refuse gracefully at the cap (a clean negative errno, NOT a panic)
+# AND recover afterwards (no slot leak). Defaults to single-core (the cap
+# logic is not SMP-specific); set SMP_CPUS=N to also exercise the S4 pool
+# locks while secondaries are online and ticking.
 
 set -u
 
