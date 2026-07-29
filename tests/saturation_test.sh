@@ -4,12 +4,14 @@
 # Boots, logs in as root, and runs /bin/satstress, which drives the still-
 # bounded kernel resource pools (per-process fds, pipes, IPC endpoints) to
 # their ceiling and back, exercises process-table growth past the initial
-# slot capacity (the table is growable; fork refusal is not asserted), plus a
-# balanced vnode create/unlink churn. For bounded pools the pass condition is
-# twofold: refuse gracefully at the cap (a clean negative errno, NOT a panic)
-# AND recover afterwards (no slot leak). Defaults to single-core (the cap
-# logic is not SMP-specific); set SMP_CPUS=N to also exercise the S4 pool
-# locks while secondaries are online and ticking.
+# slot capacity (PMM-backed reclaimable segments: free memory must return after
+# reap), and under artificial memory pressure asserts fork fails with EAGAIN
+# (admission reserve) without panic, plus a balanced vnode create/unlink churn.
+# For bounded pools the pass condition is twofold: refuse gracefully at the
+# cap (a clean negative errno, NOT a panic) AND recover afterwards (no slot
+# leak). Defaults to single-core (the cap logic is not SMP-specific); set
+# SMP_CPUS=N to also exercise the S4 pool locks while secondaries are online
+# and ticking.
 
 set -u
 
@@ -133,6 +135,8 @@ ok=1
 for marker in \
   "SAT-START fixed-size pool saturation" \
   "SAT-PROC-OK n=" \
+  "SAT-PROC-MEM before=" \
+  "SAT-ADMIT-OK refused_after_n=" \
   "SAT-FD-OK n=" \
   "SAT-PIPE-OK n=" \
   "SAT-ENDPOINT-OK n=" \
