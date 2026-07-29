@@ -137,3 +137,8 @@ mkdir -p "$STAGE/usr/lib" "$STAGE/usr/include"
 cp "$SRC/libssl.a" "$SRC/libcrypto.a" "$STAGE/usr/lib/"
 cp -R "$SRC/include/openssl" "$STAGE/usr/include/"
 printf 'Staged openssl static dev libs + headers under %s/usr\n' "$STAGE"
+
+# Content stamp after the full stage (CLI + static libs): Makefile / CI refuse a
+# root whose tree-owned runtime inputs moved (mtimes unreliable after cache restore).
+"$ROOT/scripts/artifact-inputs-hash.sh" openssl >"$ROOT/build/openssl.inputs-hash"
+printf 'inputs-hash %s\n' "$(cat "$ROOT/build/openssl.inputs-hash")"

@@ -140,5 +140,10 @@ chmod 0644 "$STAGE/usr/include/sqlite3.h" "$STAGE/usr/include/sqlite3ext.h" \
     --swpkg "$ROOT/build/swpkg" \
     --pkgrepo "$ROOT/build/pkgrepo"
 
+# Content stamp so Makefile / CI refuse a root whose tree-owned runtime inputs
+# moved (mtimes alone are unreliable after Actions cache restore).
+"$ROOT/scripts/artifact-inputs-hash.sh" sqlite >"$ROOT/build/sqlite.inputs-hash"
+
 printf 'Built %s\n' "$PACKAGE"
 printf 'Published signed repo fixture %s\n' "$REPO_ROOT/aarch64/current"
+printf 'inputs-hash %s\n' "$(cat "$ROOT/build/sqlite.inputs-hash")"

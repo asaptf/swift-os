@@ -104,7 +104,7 @@ $GCC -nostartfiles -nostdlib -T "$ROOT/userland/user_newlib.ld" -Wl,-z,max-page-
 
 # Content stamp so Makefile / CI refuse a binary whose tree-owned inputs moved
 # (mtimes alone are unreliable after Actions cache restore).
-"$ROOT/scripts/busybox-inputs-hash.sh" >"$ROOT/build/busybox.inputs-hash"
+"$ROOT/scripts/artifact-inputs-hash.sh" busybox >"$ROOT/build/busybox.inputs-hash"
 
 echo "Built $ROOT/build/busybox.elf"
 echo "inputs-hash $(cat "$ROOT/build/busybox.inputs-hash")"
