@@ -490,34 +490,63 @@ private func runNetSvcDemo() {
     uartPuts("\n")
 }
 
+// Shared self-test launcher for userland probes. A boot self-test that can fail
+// without saying anything is worse than no self-test: harnesses that only await
+// an OK marker treat silence as "not yet", then time out with no root cause.
+// Missing binary and non-zero exit both emit a distinguishable FAIL line so the
+// probe class cannot complete mutely. (demoImage already logs "demo: missing on
+// disk"; the FAIL line is the harness-visible verdict.)
+private func runSelftestUserlandProbe(
+    tag: StaticString,
+    banner: StaticString,
+    path: StaticString,
+    arg0: StaticString,
+    exitLabel: StaticString
+) {
+    uartPuts(banner)
+    let (img, sz) = demoImage(path)
+    if img == 0 {
+        uartPuts(tag)
+        uartPuts(" FAIL: missing ")
+        uartPuts(path)
+        uartPuts("\n")
+        return
+    }
+    let (p, n, argc) = packArgs([arg0])
+    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
+    uartPuts(exitLabel)
+    uartPutUInt(UInt64(code))
+    uartPuts("\n")
+    if code != 0 {
+        uartPuts(tag)
+        uartPuts(" FAIL: probe exited with non-zero status\n")
+    }
+}
+
 // C6a: per-cell resource-accounting probe. Runs as a capProcessInspect boot
 // principal: forks children (all in globalCell), reads SYS_cell_stat, and proves
 // the aggregate {processes, residentPages, handles} tracks the live processes and
 // drops a reaped process's charge. The whole system still runs in one cell; this
 // exercises the accounting domain the C6b+ cell supervisor will build on.
 private func runCellStatProbe() {
-    uartPuts("swift-os C6a: per-cell resource-accounting probe\n")
-    let (img, sz) = demoImage("/bin/cellstatprobe")
-    if img == 0 { return }
-    let (p, n, argc) = packArgs(["cellstatprobe"])
-    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
-    uartPuts("C6a cell stat probe exited, code ")
-    uartPutUInt(UInt64(code))
-    uartPuts("\n")
+    runSelftestUserlandProbe(
+        tag: "C6a",
+        banner: "swift-os C6a: per-cell resource-accounting probe\n",
+        path: "/bin/cellstatprobe",
+        arg0: "cellstatprobe",
+        exitLabel: "C6a cell stat probe exited, code ")
 }
 
 // Process-table growth probe: forks past the old fixed 64-slot table while each
 // child parks on a pipe barrier. It asserts the live count crosses that former
 // compile-time cap and that grow-and-reap leaks no slot.
 private func runProcMaxProbe() {
-    uartPuts("swift-os procmax: process-table growth probe\n")
-    let (img, sz) = demoImage("/bin/procmaxprobe")
-    if img == 0 { return }
-    let (p, n, argc) = packArgs(["procmaxprobe"])
-    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
-    uartPuts("procmax probe exited, code ")
-    uartPutUInt(UInt64(code))
-    uartPuts("\n")
+    runSelftestUserlandProbe(
+        tag: "procmax",
+        banner: "swift-os procmax: process-table growth probe\n",
+        path: "/bin/procmaxprobe",
+        arg0: "procmaxprobe",
+        exitLabel: "procmax probe exited, code ")
 }
 
 // C6b: cell-creation + spawn-into-cell probe. Runs as a capConsole boot principal:
@@ -525,14 +554,12 @@ private func runProcMaxProbe() {
 // launches /bin/cellchild into the cell, proves the child is charged to the new
 // cell (and not globalCell), then reaps it and proves the charge is reclaimed.
 private func runCellCreateProbe() {
-    uartPuts("swift-os C6b: cell-creation + spawn-into-cell probe\n")
-    let (img, sz) = demoImage("/bin/cellcreateprobe")
-    if img == 0 { return }
-    let (p, n, argc) = packArgs(["cellcreateprobe"])
-    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
-    uartPuts("C6b cell create probe exited, code ")
-    uartPutUInt(UInt64(code))
-    uartPuts("\n")
+    runSelftestUserlandProbe(
+        tag: "C6b",
+        banner: "swift-os C6b: cell-creation + spawn-into-cell probe\n",
+        path: "/bin/cellcreateprobe",
+        arg0: "cellcreateprobe",
+        exitLabel: "C6b cell create probe exited, code ")
 }
 
 // C6c: per-cell namespace-root probe. A supervisor creates a cell rooted at /www
@@ -540,14 +567,12 @@ private func runCellCreateProbe() {
 // subtree (a file inside resolves; /etc and the global root are refused) while the
 // default cell (globalCell) stays unconfined.
 private func runCellNamespaceProbe() {
-    uartPuts("swift-os C6c: per-cell namespace-root probe\n")
-    let (img, sz) = demoImage("/bin/cellnsprobe")
-    if img == 0 { return }
-    let (p, n, argc) = packArgs(["cellnsprobe"])
-    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
-    uartPuts("C6c cell namespace probe exited, code ")
-    uartPutUInt(UInt64(code))
-    uartPuts("\n")
+    runSelftestUserlandProbe(
+        tag: "C6c",
+        banner: "swift-os C6c: per-cell namespace-root probe\n",
+        path: "/bin/cellnsprobe",
+        arg0: "cellnsprobe",
+        exitLabel: "C6c cell namespace probe exited, code ")
 }
 
 // C6d: cell lifecycle probe. A supervisor creates a cell with a resident-page cap,
@@ -555,14 +580,12 @@ private func runCellNamespaceProbe() {
 // proves teardown is refused while members live, then releases + reaps them and
 // frees the CellId — proving the domain's accounting is reclaimed and reusable.
 private func runCellLifecycleProbe() {
-    uartPuts("swift-os C6d: cell lifecycle (cap + enumerate + teardown) probe\n")
-    let (img, sz) = demoImage("/bin/cellcapprobe")
-    if img == 0 { return }
-    let (p, n, argc) = packArgs(["cellcapprobe"])
-    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
-    uartPuts("C6d cell lifecycle probe exited, code ")
-    uartPutUInt(UInt64(code))
-    uartPuts("\n")
+    runSelftestUserlandProbe(
+        tag: "C6d",
+        banner: "swift-os C6d: cell lifecycle (cap + enumerate + teardown) probe\n",
+        path: "/bin/cellcapprobe",
+        arg0: "cellcapprobe",
+        exitLabel: "C6d cell lifecycle probe exited, code ")
 }
 
 // C6e: the end-to-end "one service per cell" payoff. A cell supervisor assembles a
@@ -570,14 +593,12 @@ private func runCellLifecycleProbe() {
 // request/reply service (/bin/cellhello) inside it, drives a live round-trip, proves
 // the service is isolated + accounted, and tears it down cleanly.
 private func runCellServiceProbe() {
-    uartPuts("swift-os C6e: one-service-per-cell end-to-end probe\n")
-    let (img, sz) = demoImage("/bin/cellsvcprobe")
-    if img == 0 { return }
-    let (p, n, argc) = packArgs(["cellsvcprobe"])
-    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
-    uartPuts("C6e cell service probe exited, code ")
-    uartPutUInt(UInt64(code))
-    uartPuts("\n")
+    runSelftestUserlandProbe(
+        tag: "C6e",
+        banner: "swift-os C6e: one-service-per-cell end-to-end probe\n",
+        path: "/bin/cellsvcprobe",
+        arg0: "cellsvcprobe",
+        exitLabel: "C6e cell service probe exited, code ")
 }
 
 // C7a: intra-member resident-page cap probe. A supervisor creates a capped cell,
@@ -585,14 +606,12 @@ private func runCellServiceProbe() {
 // (sbrk/mmap) past the cell's cap — the aggregate never exceeds the cap — while an
 // uncapped (global) member is unaffected. Runs single-core and under -smp 4.
 private func runCellPagecapProbe() {
-    uartPuts("swift-os C7a: intra-member resident-page cap probe\n")
-    let (img, sz) = demoImage("/bin/cellgrowprobe")
-    if img == 0 { return }
-    let (p, n, argc) = packArgs(["cellgrowprobe"])
-    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
-    uartPuts("C7a cell pagecap probe exited, code ")
-    uartPutUInt(UInt64(code))
-    uartPuts("\n")
+    runSelftestUserlandProbe(
+        tag: "C7a",
+        banner: "swift-os C7a: intra-member resident-page cap probe\n",
+        path: "/bin/cellgrowprobe",
+        arg0: "cellgrowprobe",
+        exitLabel: "C7a cell pagecap probe exited, code ")
 }
 
 // C7b: per-cell handle cap probe. A supervisor creates a cell with a handle cap,
@@ -600,14 +619,12 @@ private func runCellPagecapProbe() {
 // table (open) past the cell's cap — refused with EMFILE, the aggregate never exceeds
 // the cap — while an uncapped (global) member is unaffected. Single-core and -smp 4.
 private func runCellHandlecapProbe() {
-    uartPuts("swift-os C7b: per-cell handle cap probe\n")
-    let (img, sz) = demoImage("/bin/cellhandleprobe")
-    if img == 0 { return }
-    let (p, n, argc) = packArgs(["cellhandleprobe"])
-    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
-    uartPuts("C7b cell handlecap probe exited, code ")
-    uartPutUInt(UInt64(code))
-    uartPuts("\n")
+    runSelftestUserlandProbe(
+        tag: "C7b",
+        banner: "swift-os C7b: per-cell handle cap probe\n",
+        path: "/bin/cellhandleprobe",
+        arg0: "cellhandleprobe",
+        exitLabel: "C7b cell handlecap probe exited, code ")
 }
 
 // C7c: persistent restart/FDIR cell supervisor probe. A long-running supervisor hosts
@@ -615,14 +632,12 @@ private func runCellHandlecapProbe() {
 // restarts the service in a FRESH cell (new CellId), and bounds restarts so a crash
 // loop cannot fork-storm. Runs single-core and under -smp 4.
 private func runCellSupervisorProbe() {
-    uartPuts("swift-os C7c: persistent restart/FDIR cell supervisor probe\n")
-    let (img, sz) = demoImage("/bin/cell-supervisor")
-    if img == 0 { return }
-    let (p, n, argc) = packArgs(["cell-supervisor"])
-    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
-    uartPuts("C7c cell supervisor probe exited, code ")
-    uartPutUInt(UInt64(code))
-    uartPuts("\n")
+    runSelftestUserlandProbe(
+        tag: "C7c",
+        banner: "swift-os C7c: persistent restart/FDIR cell supervisor probe\n",
+        path: "/bin/cell-supervisor",
+        arg0: "cell-supervisor",
+        exitLabel: "C7c cell supervisor probe exited, code ")
 }
 
 // C7d: lift a REAL in-tree service (/bin/kv) into a supervised cell. The supervisor
@@ -630,14 +645,12 @@ private func runCellSupervisorProbe() {
 // drives a live SET/GET round-trip over pipes, then faults it and restarts it in a
 // fresh cell (with fresh state), and tears down cleanly. Single-core and -smp 4.
 private func runCellKvSupervisorProbe() {
-    uartPuts("swift-os C7d: real service (/bin/kv) in a supervised cell probe\n")
-    let (img, sz) = demoImage("/bin/cell-kv-supervisor")
-    if img == 0 { return }
-    let (p, n, argc) = packArgs(["cell-kv-supervisor"])
-    let code = processRunElf(img, sz, packed: p, packedLen: n, argc: argc)
-    uartPuts("C7d cell kv-supervisor probe exited, code ")
-    uartPutUInt(UInt64(code))
-    uartPuts("\n")
+    runSelftestUserlandProbe(
+        tag: "C7d",
+        banner: "swift-os C7d: real service (/bin/kv) in a supervised cell probe\n",
+        path: "/bin/cell-kv-supervisor",
+        arg0: "cell-kv-supervisor",
+        exitLabel: "C7d cell kv-supervisor probe exited, code ")
 }
 
 private func runFsDemo() {
