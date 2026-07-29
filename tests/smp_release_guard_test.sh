@@ -681,7 +681,7 @@ for needle in \
     exit 1
   fi
 done
-if ! grep -Fq 'SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_resource_stress_test.sh' "$MAKEFILE_PATH" ||
+if ! grep -Fq 'SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_resource_stress_test.sh' "$MAKEFILE_PATH" ||
    ! grep -q '^smp-resource-stress-test:' "$MAKEFILE_PATH"; then
   echo "FAIL: S4f resource stress test must be wired into make test and expose a dedicated make target." >&2
   exit 1
@@ -949,7 +949,7 @@ for needle in \
   '$(BUILD)/user_s4stress.o: userland/s4stress.c userland/lib/syscall.h userland/lib/fs.h Makefile' \
   '$(USER_S4STRESS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_s4stress.o userland/user.ld Makefile' \
   'cp $(USER_S4STRESS_ELF) $(BASE_ROOT)/bin/s4stress' \
-  'SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/s4_resource_stress_test.sh' \
+  'SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/s4_resource_stress_test.sh' \
   's4-resource-stress-test: build $(QEMU_DTB_SMP4) base-image'; do
   if ! grep -Fq -- "$needle" "$MAKEFILE"; then
     echo "FAIL: S4f resource stress is not wired into Makefile: $needle." >&2
@@ -1088,7 +1088,7 @@ done
 
 for needle in \
   'SMP_CPUS="${SMP_CPUS:-1}"' \
-  'SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh' \
+  'SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/top_test.sh' \
   'smp-cpu-utilization-test: build $(QEMU_DTB_SMP4) base-image' \
   'CPUs: [0-9]+ present, per-CPU busy'; do
   if ! grep -Fq -- "$needle" "$MAKEFILE" "$ROOT/tests/top_test.sh"; then
@@ -1152,7 +1152,7 @@ done
 
 for needle in \
   's5-scheduler-placement-test: build $(QEMU_DTB_SMP4) base-image' \
-  'TIMEOUT=180 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh'; do
+  'TIMEOUT=180 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_boot_test.sh'; do
   if ! grep -Fq -- "$needle" "$MAKEFILE"; then
     echo "FAIL: S5b make target missing $needle." >&2
     exit 1
@@ -1206,7 +1206,7 @@ done
 
 for needle in \
   's5-placement-stress-test: build $(QEMU_DTB_SMP4) base-image' \
-  'TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh'; do
+  'TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_boot_test.sh'; do
   if ! grep -Fq -- "$needle" "$MAKEFILE"; then
     echo "FAIL: S5c make target missing $needle." >&2
     exit 1
@@ -1259,7 +1259,7 @@ done
 
 for needle in \
   's5-el0-fanout-test: build $(QEMU_DTB_SMP4) base-image' \
-  'TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh'; do
+  'TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_boot_test.sh'; do
   if ! grep -Fq -- "$needle" "$MAKEFILE"; then
     echo "FAIL: S5d make target missing $needle." >&2
     exit 1
@@ -1331,7 +1331,7 @@ done
 
 for needle in \
   's5-thread-fanout-test: build $(QEMU_DTB_SMP4) base-image' \
-  'TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh'; do
+  'TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_boot_test.sh'; do
   if ! grep -Fq -- "$needle" "$MAKEFILE"; then
     echo "FAIL: S5e make target missing $needle." >&2
     exit 1
@@ -1386,7 +1386,7 @@ done
 
 for needle in \
   's5-run-any-placement-test: build $(QEMU_DTB_SMP4) base-image' \
-  'TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh'; do
+  'TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_boot_test.sh'; do
   if ! grep -Fq -- "$needle" "$MAKEFILE"; then
     echo "FAIL: S5f make target missing $needle." >&2
     exit 1
