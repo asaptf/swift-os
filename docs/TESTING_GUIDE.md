@@ -52,7 +52,9 @@ are **not** part of `make test`. They live on a separate weekly gate:
 make ports-test
 ```
 
-CI schedules that as `ci · ports` (weekly + `workflow_dispatch`). See
+CI schedules that as `ci · ports` (weekly + `workflow_dispatch`), split into
+dependency-aware jobs (`ports · mc-stack`, `ports · bash`, `ports · zsh`) so
+each group can finish and cache independently. See
 [Heavy ports gate](#heavy-ports-gate) below.
 
 ## Choose A Test Scope
@@ -219,7 +221,23 @@ churn.
 | GNU bash | `make bash-test` | `tests/bash_test.sh` |
 | zsh | `make zsh-test` | `tests/zsh_test.sh` |
 
-Aggregate (one local command; builds any missing or content-stale port first):
+**CI job ownership** (dependency-aware split; each job caches its own port
+artifacts so a finished group populates cache even if another hits the
+platform limit):
+
+| CI job | Owns (builds + harnesses) | Make target |
+| --- | --- | --- |
+| `ports · mc-stack` | ncurses, GLib, MC | `make ports-mc-stack-test` |
+| `ports · bash` | bash (ncurses as build dep) | `make ports-bash-test` |
+| `ports · zsh` | zsh (ncurses as build dep) | `make ports-zsh-test` |
+
+A cheap `ports-gate` job requires every matrix leg to succeed (failure,
+cancel/timeout, or skip fails the gate). First-run wall times are logged as
+`PORTS_TIMING group=… wall_s=…` (and per-port lines for mc-stack) so grouping
+can be re-evaluated after a real CI run.
+
+Local aggregate (one command; builds any missing or content-stale port first
+and runs all five harnesses):
 
 ```sh
 make ports-test
@@ -229,17 +247,17 @@ make ports-test
 
 | Gate | Command | Schedule |
 | --- | --- | --- |
-| Local / operator | `make ports-test` | On demand when those ports or the runtime shim change |
-| CI `ci · ports` | `make ports-test` | Weekly (Sunday 04:00 UTC) and `workflow_dispatch` |
+| Local / operator | `make ports-test` (or a CI group target) | On demand when those ports or the runtime shim change |
+| CI `ci · ports` | matrix: `ports-mc-stack-test` / `ports-bash-test` / `ports-zsh-test` + `ports-gate` | Weekly (Sunday 04:00 UTC) and `workflow_dispatch` |
 | CI `ci · nightly` | `make test` | Daily — does **not** include the five harnesses |
 | CI `ci · fast` | `make ci-test` | Every PR / push to main — unchanged |
 
 Coverage must not silently disappear: the five harnesses still exist unchanged;
 only their scheduling gate moved. Content stamps (`build/<name>.inputs-hash`
 via `scripts/artifact-inputs-hash.sh`) refuse a stale port binary after a
-runtime-shim change, same mechanism as busybox/sqlite/nginx/openssl. The
-weekly workflow keeps its own Actions cache for the port build outputs
-(separate from the bootstrap cache).
+runtime-shim change, same mechanism as busybox/sqlite/nginx/openssl. Each CI
+job keeps its own Actions cache for that group's port build outputs (separate
+from the bootstrap cache and from the other groups).
 
 ## Focused Test Matrix
 
