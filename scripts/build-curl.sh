@@ -9,6 +9,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 VERSION="${CURL_VERSION:-8.20.0}"
 DISTFILES="${CURL_DISTFILES:-$ROOT/build/swport-distfiles}"
 WORK="$ROOT/build/curl-port-work"
@@ -108,9 +110,11 @@ chmod +x "$cc_wrapper"
     export CFLAGS="-ffreestanding -Os"
     export CPPFLAGS="-isystem $COMPAT -isystem $SYSROOT/include"
     export LDFLAGS="-L$SYSROOT/lib"
+    # Already had --build; still sanitize CLICOLOR_FORCE so ac_cv_exeext stays clean.
+    autoconf_cross_prepare
     ./configure \
         --host=aarch64-elf \
-        --build="$(./config.guess)" \
+        "$(autoconf_cross_build_arg)" \
         --prefix=/usr \
         --disable-shared \
         --enable-static \

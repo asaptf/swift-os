@@ -3,6 +3,35 @@
 Engineering log: accepted decisions, hardware constants, exact build/run commands, and tool versions.
 Newest notes at the top of each section.
 
+## Autoconf cross-compile: never run guest binaries on the host (2026-07-29)
+
+Class of bug that is invisible on macOS and fatal on same-arch Linux CI
+(`ubuntu-24.04-arm` building `aarch64-elf`):
+
+1. **Hang:** with only `--host=aarch64-elf`, Autoconf sets `cross_compiling=maybe`
+   and `AC_PROG_CC` *executes* the linked freestanding `a.out` to decide. On a
+   same-arch host the binary is loadable and never returns (no OS under it) —
+   the first real `ci · ports` run burned its 6-hour ceiling there. On macOS the
+   probe fails fast (ELF vs Mach-O) so configure continues with wrong answers.
+2. **Poisoned EXEEXT:** with `CLICOLOR_FORCE=1` (common on macOS), configure's
+   `` `ls conftest.*` `` embeds ANSI escapes into `ac_cv_exeext`. Generated
+   Makefiles then die with `missing separator` (was misread as a BSD-vs-GNU make
+   quirk). ncurses was the first port to surface both faces of the bug.
+
+**Fix (flags + env, not third-party patches):** every autoconf port configure
+must (a) pass `--host` *and* `--build=$(./config.guess)` so `cross_compiling=yes`
+before any run-ifelse, and (b) call `autoconf_cross_prepare` from
+`scripts/host-tools.sh` (clears `CLICOLOR_FORCE` / `LS_COLORS`, pre-seeds empty
+`ac_cv_exeext`). Applied to: ncurses, glib, mc, bash, zsh, pcre2, xz, libarchive,
+curl, rsync. nginx already had a dedicated overlay for its non-autoconf
+configure. zlib uses a custom non-autoconf configure (not in this class).
+newlib/gcc use real cross triples with `--target` and are not host-probe ports.
+
+**Still unproven until CI:** same-arch Linux hang is fixed by construction
+(`cross_compiling=yes` skips the run), but wall-clock of the full `ci · ports`
+matrix (ncurses + glib + mc + bash + zsh) has never been measured on
+`ubuntu-24.04-arm`. Local macOS `make ncurses` wall time is the first data point.
+
 ## malloc lock depth: no `__thread` / emutls (2026-07-28)
 
 **Toolchain limitation.** For the bare-metal `aarch64-elf` target used by
@@ -280,7 +309,8 @@ First step of the Midnight Commander arc: cross-build a static **ncurses 6.5**
   `cf_cv_func_mkstemp=yes`, `cf_cv_type_of_bool=unsigned`, `cf_cv_typeof_chtype=long`,
   `cf_cv_typeof_mmask_t=long`, `cf_cv_sizechange=yes`, `cf_cv_working_chmod=yes`,
   `ac_cv_func_fork_works=yes`, `ac_cv_func_vfork_works=yes`,
-  `ac_cv_func_memcmp_working=yes`.
+  `ac_cv_func_memcmp_working=yes`. Also `--build=$(./config.guess)` +
+  `autoconf_cross_prepare` (see "Autoconf cross-compile" note above).
 - **8-bit, not widec** (`--disable-widec`): newlib has no `setlocale`/locale.
   MC prefers ncursesw for UTF-8; revisit at MC1 if needed (8-bit MC is fine on a
   no-locale serial box).
