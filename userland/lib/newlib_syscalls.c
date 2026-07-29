@@ -12,6 +12,7 @@
 #include <sys/times.h>
 #include <sys/time.h>
 #include <errno.h>
+#include <string.h>
 
 #define SYS_OPEN  1
 #define SYS_READ  2
@@ -47,8 +48,11 @@ static _off_t ret_off(long r) {
     return (_off_t)r;
 }
 
-// Kernel stat layout (kernel/vfs/vfs.swift writeStatMode), 24 bytes:
-//   u32 mode, u32 uid, u64 size, u32 gid, u32 nlink.
+// Kernel stat layout (kernel/vfs/vfs.swift writeStatMode), 48 bytes:
+//   u32 mode, u32 uid, u64 size, u32 gid, u32 nlink, u64 mtime, u64 ino, u64 dev.
+// ino/dev must be filled: SQLite's unix VFS compares st_ino across fstat/stat
+// (SQLITE_FCNTL_HAS_MOVED); leaving them as stack garbage caused intermittent
+// SQLITE_READONLY_DBMOVED ("attempt to write a readonly database") on /data.
 struct kstat {
     unsigned int mode;
     unsigned int uid;
@@ -56,6 +60,8 @@ struct kstat {
     unsigned int gid;
     unsigned int nlink;
     unsigned long mtime;
+    unsigned long ino;
+    unsigned long dev;
 };
 
 char *__env[1] = { 0 };
@@ -107,11 +113,18 @@ int _getpid(void) { return (int)sys3(SYS_GETPID, 0, 0, 0); }
 void *_sbrk(int incr) { return (void *)sys3(SYS_SBRK, incr, 0, 0); }
 
 int _fstat(int fd, struct stat *st) {
+    // Zero the full newlib struct so st_ino/st_dev/st_blksize are never stack
+    // garbage (SQLite and others read those fields even when we only care about
+    // size/mode).
+    memset(st, 0, sizeof(*st));
     if (fd < 3) {            // stdin/out/err are the console (a char device)
         st->st_mode = S_IFCHR;
         st->st_uid = 0;
         st->st_gid = 0;
         st->st_nlink = 1;
+        st->st_ino = 1;
+        st->st_dev = 1;
+        st->st_blksize = 4096;
         return 0;
     }
     struct kstat k;
@@ -121,6 +134,9 @@ int _fstat(int fd, struct stat *st) {
     st->st_uid = k.uid;
     st->st_gid = k.gid;
     st->st_nlink = k.nlink ? k.nlink : 1;
+    st->st_ino = (ino_t)k.ino;
+    st->st_dev = (dev_t)k.dev;
+    st->st_blksize = 4096;
     st->st_mtim.tv_sec = (time_t)k.mtime;
     st->st_ctim.tv_sec = (time_t)k.mtime;
     st->st_atim.tv_sec = (time_t)k.mtime;
@@ -128,6 +144,7 @@ int _fstat(int fd, struct stat *st) {
 }
 
 int _stat(const char *path, struct stat *st) {
+    memset(st, 0, sizeof(*st));
     struct kstat k;
     if (sys3(SYS_STAT, (long)path, (long)&k, 0) != 0) { errno = ENOENT; return -1; }
     st->st_mode = k.mode;
@@ -135,6 +152,9 @@ int _stat(const char *path, struct stat *st) {
     st->st_uid = k.uid;
     st->st_gid = k.gid;
     st->st_nlink = k.nlink ? k.nlink : 1;
+    st->st_ino = (ino_t)k.ino;
+    st->st_dev = (dev_t)k.dev;
+    st->st_blksize = 4096;
     st->st_mtim.tv_sec = (time_t)k.mtime;
     st->st_ctim.tv_sec = (time_t)k.mtime;
     st->st_atim.tv_sec = (time_t)k.mtime;

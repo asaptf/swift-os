@@ -3144,7 +3144,14 @@ func vfsOpen(path pathVA: UInt, flags: UInt) -> Int {
             node = nodes[parent].dataFs
                 ? createDataFsNode(parent, path + ls, ll, isDir: false)
                 : createTmpNode(parent, path + ls, ll, isDir: false)
-            if node == -1 { return Errno.noSpace.code }
+            if node == -1 {
+                // Debug-gated (default min level is INFO): names a failed /data
+                // create without flooding healthy boots. detail = negative errno.
+                if nodes[parent].dataFs {
+                    klog(.debug, "datafs", "open creat failed", UInt64(bitPattern: Int64(Errno.noSpace.code)))
+                }
+                return Errno.noSpace.code
+            }
         } else {
             return Errno.noEntry.code
         }
@@ -3605,6 +3612,12 @@ func vfsWrite(fd: Int, buffer: UInt, count: UInt) -> Int {
             result = w
         } else {
             result = w == 0 ? 0 : Errno.noSpace.code
+            // Debug-gated: a healthy D3 boot never logs here (the D3 readonly
+            // failure was SQLITE_READONLY_DBMOVED from garbage st_ino, not a
+            // datafs write errno).
+            if result < 0 {
+                klog(.debug, "datafs", "write failed", UInt64(bitPattern: Int64(result)))
+            }
         }
     } else if nodes[node].readOnly {
         result = Errno.readOnly.code
@@ -3645,7 +3658,10 @@ func vfsFtruncate(fd: Int, length: Int) -> Int {
     let node = file.node
     if nodes[node].isDir { return Errno.isDir.code }
     if nodes[node].dataFs {
-        if !datafsTruncate(nodes[node].dfsVolume, nodes[node].dfsInode, length) { return Errno.noSpace.code }
+        if !datafsTruncate(nodes[node].dfsVolume, nodes[node].dfsInode, length) {
+            klog(.debug, "datafs", "ftruncate failed", UInt64(bitPattern: Int64(Errno.noSpace.code)))
+            return Errno.noSpace.code
+        }
         nodes[node].dataLen = length
         nodes[node].mtime = rtcNow()
         return 0
@@ -3674,7 +3690,12 @@ func vfsFsync(fd: Int) -> Int {
     guard entry.kind == .file else { return 0 }
     let node = openDescriptions[entry.object].node
     if node >= 0 && node < nodeCount && nodes[node].dataFs {
-        return datafsFlush(nodes[node].dfsVolume) == 0 ? 0 : Errno.invalid.code
+        let fr = datafsFlush(nodes[node].dfsVolume)
+        if fr != 0 {
+            klog(.debug, "datafs", "fsync failed", UInt64(bitPattern: Int64(Errno.invalid.code)))
+            return Errno.invalid.code
+        }
+        return 0
     }
     return 0
 }
@@ -4753,14 +4774,21 @@ func vfsLseek(fd: Int, offset: Int, whence: Int) -> Int {
 }
 
 // Kernel stat record (kstat) the newlib/Swift bottom ends translate into their
-// own struct stat. 32-byte little-endian layout (grown from 16→24→32):
+// own struct stat. 48-byte little-endian layout (grown from 16→24→32→48):
 //   off 0  u32 mode    off 4  u32 uid    off 8  u64 size
 //   off 16 u32 gid     off 20 u32 nlink  off 24 u64 mtime (Unix seconds)
+//   off 32 u64 ino     off 40 u64 dev
 // Earlier fields keep their offsets, so older shorter readers stay valid.
+//
+// `ino`/`dev` MUST be stable identity: SQLite's unix VFS stores st_ino at open
+// and later compares it via SQLITE_FCNTL_HAS_MOVED. Uninitialized st_ino made
+// that check intermittent (SQLITE_READONLY_DBMOVED → "attempt to write a
+// readonly database") between autocommit transactions that re-open the
+// rollback journal. See tests/datafs_sqlite_autocommit_test.sh.
 private func writeStatMode(_ va: UInt, _ mode: UInt32, _ size: Int,
                            uid: UInt32 = 1, gid: UInt32 = 1, nlink: UInt32 = 1,
-                           mtime: UInt64 = 0) -> Int {
-    guard let p8 = userWritableBuffer(va, 32) else { return Errno.invalid.code }
+                           mtime: UInt64 = 0, ino: UInt64 = 0, dev: UInt64 = 0) -> Int {
+    guard let p8 = userWritableBuffer(va, 48) else { return Errno.invalid.code }
     let p = UnsafeMutableRawPointer(p8)
     p.storeBytes(of: mode, toByteOffset: 0, as: UInt32.self)
     p.storeBytes(of: uid, toByteOffset: 4, as: UInt32.self)
@@ -4768,6 +4796,8 @@ private func writeStatMode(_ va: UInt, _ mode: UInt32, _ size: Int,
     p.storeBytes(of: gid, toByteOffset: 16, as: UInt32.self)
     p.storeBytes(of: nlink, toByteOffset: 20, as: UInt32.self)
     p.storeBytes(of: mtime, toByteOffset: 24, as: UInt64.self)
+    p.storeBytes(of: ino, toByteOffset: 32, as: UInt64.self)
+    p.storeBytes(of: dev, toByteOffset: 40, as: UInt64.self)
     return 0
 }
 
@@ -4793,8 +4823,13 @@ private func writeStatNode(_ va: UInt, _ node: Int) -> Int {
         ? (sIFCHR | perms)
         : ((nodes[node].isDir ? sIFDIR : sIFREG) | perms)
     let owner = nodes[node].owner
+    // Stable file identity for SQLite HAS_MOVED / inode-lock tables:
+    //   ino = VNode index + 1 (never 0 for a live node)
+    //   dev = datafs volume slot + 2, else 1 for base/tmpfs (never 0)
+    let ino = UInt64(node) &+ 1
+    let dev: UInt64 = nodes[node].dataFs ? UInt64(nodes[node].dfsVolume) &+ 2 : 1
     return writeStatMode(va, mode, nodes[node].dataLen, uid: owner, gid: owner,
-                         mtime: nodes[node].mtime)
+                         mtime: nodes[node].mtime, ino: ino, dev: dev)
 }
 
 func vfsStat(path pathVA: UInt, statbuf: UInt) -> Int {

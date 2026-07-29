@@ -3081,6 +3081,11 @@ datafs-fsync-test: build $(QEMU_DTB)
 datafs-sqlite-test: build $(QEMU_DTB) base-image
 	./tests/datafs_sqlite_test.sh
 
+# D3 regression: autocommit create+insert on /data (no BEGIN EXCLUSIVE).
+# Guards SQLITE_READONLY_DBMOVED from unstable st_ino after the kstat identity fix.
+datafs-sqlite-autocommit-test: build $(QEMU_DTB) base-image
+	./tests/datafs_sqlite_autocommit_test.sh
+
 # V1: a second SWDATAFS disk mounts at /mnt/data1 as a distinct datafs volume,
 # isolated from /data, and both survive reboot. Boots with TWO data disks (the
 # test stamps them); the kernel mounts volume 0 = /data, volume 1 = /mnt/data1.
