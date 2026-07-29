@@ -16,6 +16,11 @@
 #   nginx    → build/nginx-root  (nginx embeds the runtime)
 #   openssl  → build/openssl-root (openssl CLI embeds the runtime; libssl.a is
 #              the make target that stages the whole root)
+#   ncurses  → build/ncdemo.elf   (weekly ports gate; embeds the runtime)
+#   glib     → build/glibdemo.elf (weekly ports gate; embeds the runtime)
+#   mc       → build/mc.elf       (weekly ports gate; embeds the runtime)
+#   bash     → build/bash.elf     (weekly ports gate; embeds the runtime)
+#   zsh      → build/zsh.elf      (weekly ports gate; embeds the runtime)
 #
 # Usage:
 #   ./scripts/artifact-inputs-hash.sh <name>            # print sha256 hex
@@ -39,7 +44,8 @@ if [[ -f "$ROOT/ci/toolchain.env" ]]; then
 fi
 
 # Shared runtime linked into every freestanding port binary. Keep in sync with
-# the -c / -T / -isystem paths in scripts/build-{busybox,sqlite,nginx,openssl}.sh.
+# the -c / -T / -isystem paths in scripts/build-{busybox,sqlite,nginx,openssl,
+# ncurses,glib,mc,bash,zsh}.sh.
 list_runtime_inputs() {
     echo "scripts/artifact-inputs-hash.sh"
     echo "userland/lib/crt0_newlib.S"
@@ -71,9 +77,26 @@ list_file_inputs() {
             echo "scripts/build-openssl.sh"
             echo "ports/security/openssl/Port.json"
             ;;
+        ncurses)
+            echo "scripts/build-ncurses.sh"
+            echo "userland/ncurses/ncdemo.c"
+            ;;
+        glib)
+            echo "scripts/build-glib.sh"
+            echo "userland/glib/glibdemo.c"
+            ;;
+        mc)
+            echo "scripts/build-mc.sh"
+            ;;
+        bash)
+            echo "scripts/build-bash.sh"
+            ;;
+        zsh)
+            echo "scripts/build-zsh.sh"
+            ;;
         *)
             echo "FAIL: unknown artifact name: $name" >&2
-            echo "known: busybox sqlite nginx openssl" >&2
+            echo "known: busybox sqlite nginx openssl ncurses glib mc bash zsh" >&2
             exit 2
             ;;
     esac
@@ -95,6 +118,22 @@ version_line() {
         openssl)
             printf 'OPENSSL_VERSION=%s\n' "${OPENSSL_VERSION:-3.5.7}"
             ;;
+        ncurses)
+            printf 'NCURSES_VERSION=%s\n' "${NCURSES_VERSION:-6.5}"
+            ;;
+        glib)
+            printf 'GLIB_VERSION=%s\n' "${GLIB_VERSION:-2.56.4}"
+            ;;
+        mc)
+            printf 'MC_VERSION=%s\n' "${MC_VERSION:-4.8.31}"
+            ;;
+        bash)
+            # Not BASH_VERSION — that is a bash builtin and would pin the host shell.
+            printf 'BASH_PORT_VERSION=%s\n' "${BASH_PORT_VERSION:-5.2.37}"
+            ;;
+        zsh)
+            printf 'ZSH_VERSION=%s\n' "${ZSH_VERSION:-5.9}"
+            ;;
     esac
 }
 
@@ -105,6 +144,11 @@ artifact_path() {
         sqlite)   echo "$ROOT/build/sqlite-root/usr/bin/sqlite3" ;;
         nginx)    echo "$ROOT/build/nginx-root/usr/sbin/nginx" ;;
         openssl)  echo "$ROOT/build/openssl-root/usr/lib/libssl.a" ;;
+        ncurses)  echo "$ROOT/build/ncdemo.elf" ;;
+        glib)     echo "$ROOT/build/glibdemo.elf" ;;
+        mc)       echo "$ROOT/build/mc.elf" ;;
+        bash)     echo "$ROOT/build/bash.elf" ;;
+        zsh)      echo "$ROOT/build/zsh.elf" ;;
     esac
 }
 
@@ -170,13 +214,13 @@ do_check() {
 }
 
 usage() {
-    echo "usage: $0 <busybox|sqlite|nginx|openssl> [--list|--check]" >&2
+    echo "usage: $0 <busybox|sqlite|nginx|openssl|ncurses|glib|mc|bash|zsh> [--list|--check]" >&2
     echo "       $0 --names" >&2
     exit 2
 }
 
 if [[ "${1:-}" == "--names" ]]; then
-    printf '%s\n' busybox sqlite nginx openssl
+    printf '%s\n' busybox sqlite nginx openssl ncurses glib mc bash zsh
     exit 0
 fi
 
@@ -185,7 +229,7 @@ name="${1:-}"
 shift || true
 
 case "$name" in
-    busybox|sqlite|nginx|openssl) ;;
+    busybox|sqlite|nginx|openssl|ncurses|glib|mc|bash|zsh) ;;
     *) usage ;;
 esac
 

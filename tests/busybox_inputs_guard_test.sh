@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # busybox_inputs_guard_test.sh — static guard for every CI-cached artifact that
-# embeds the freestanding runtime (busybox, sqlite, nginx, openssl).
+# embeds the freestanding runtime (busybox, sqlite, nginx, openssl, and the
+# weekly heavy ports: ncurses, glib, mc, bash, zsh).
 #
 # For each covered build script, every tree-owned source that is compiled/linked
 # (or fed via -isystem / -T) must be covered by scripts/artifact-inputs-hash.sh,
@@ -25,10 +26,11 @@ MAKEFILE="$ROOT/Makefile"
 BOOTSTRAP="$ROOT/scripts/ci-bootstrap.sh"
 CI_FAST="$ROOT/.github/workflows/ci-fast.yml"
 CI_NIGHTLY="$ROOT/.github/workflows/ci-nightly.yml"
+CI_PORTS="$ROOT/.github/workflows/ci-ports.yml"
 TMPDIR_GUARD="$(mktemp -d "${TMPDIR:-/tmp}/ported-inputs-guard.XXXXXX")"
 trap 'rm -rf "$TMPDIR_GUARD"' EXIT
 
-for f in "$HASH_SCRIPT" "$BB_WRAPPER" "$MAKEFILE" "$BOOTSTRAP" "$CI_FAST" "$CI_NIGHTLY"; do
+for f in "$HASH_SCRIPT" "$BB_WRAPPER" "$MAKEFILE" "$BOOTSTRAP" "$CI_FAST" "$CI_NIGHTLY" "$CI_PORTS"; do
   if [[ ! -f "$f" ]]; then
     echo "FAIL: required file missing: $f" >&2
     exit 1
@@ -45,9 +47,9 @@ if [[ ! -x "$BB_WRAPPER" ]]; then
 fi
 
 NAMES="$("$HASH_SCRIPT" --names)"
-expected_names=$'busybox\nsqlite\nnginx\nopenssl'
+expected_names=$'busybox\nsqlite\nnginx\nopenssl\nncurses\nglib\nmc\nbash\nzsh'
 if [[ "$NAMES" != "$expected_names" ]]; then
-  echo "FAIL: artifact-inputs-hash.sh --names must list busybox sqlite nginx openssl" >&2
+  echo "FAIL: artifact-inputs-hash.sh --names must list busybox sqlite nginx openssl ncurses glib mc bash zsh" >&2
   echo "  got: $(printf '%s' "$NAMES" | tr '\n' ' ')" >&2
   exit 1
 fi
@@ -114,12 +116,16 @@ discover_inputs() {
   LC_ALL=C sort -u "$out" -o "$out"
 }
 
+# cache_yml_list: space-separated paths to workflow files that must cache this
+# artifact. cache_path: path fragment under build/ (or a full path) that the
+# workflow cache `path:` block must list (e.g. build/busybox.elf, build/sqlite-root).
 check_artifact() {
   local name="$1"
   local build_script="$2"
-  local artifact_needle="$3"   # path fragment make / stamp use
-  local stamp_name="$4"        # e.g. busybox.inputs-hash
-  local mode="$5"              # refuse | rebuild
+  local stamp_name="$3"        # e.g. busybox.inputs-hash
+  local mode="$4"              # refuse | rebuild
+  local cache_yml_list="$5"
+  local cache_path="$6"
 
   if [[ ! -f "$build_script" ]]; then
     echo "FAIL: build script missing for $name: $build_script" >&2
@@ -254,8 +260,9 @@ check_artifact() {
     fi
   fi
 
-  # CI cache must store the stamp and hash tree-owned inputs.
-  for yml in "$CI_FAST" "$CI_NIGHTLY"; do
+  # CI cache(s) must store the stamp, hash tree-owned inputs, and the artifact path.
+  local yml
+  for yml in $cache_yml_list; do
     for needle in \
       "build/${stamp_name}" \
       'scripts/artifact-inputs-hash.sh' \
@@ -268,41 +275,107 @@ check_artifact() {
         exit 1
       fi
     done
-    # Port roots themselves (not busybox.elf).
-    if [[ "$name" != "busybox" ]]; then
-      if ! grep -Fq -- "build/${name}-root" "$yml"; then
-        echo "FAIL: $yml cache path missing build/${name}-root" >&2
-        exit 1
-      fi
+    if ! grep -Fq -- "$cache_path" "$yml"; then
+      echo "FAIL: $yml cache path missing $cache_path" >&2
+      exit 1
     fi
   done
 
   echo "  OK $name (discovered ${disc_count} build-script path(s), tracked $(wc -l <"$tracked" | tr -d ' ') file(s), mode=$mode)"
 }
 
+BOOTSTRAP_CACHES="$CI_FAST $CI_NIGHTLY"
+PORTS_CACHES="$CI_PORTS"
+
 check_artifact busybox \
   "$ROOT/scripts/build-busybox.sh" \
-  "busybox.elf" \
   "busybox.inputs-hash" \
-  refuse
+  refuse \
+  "$BOOTSTRAP_CACHES" \
+  "build/busybox.elf"
 
 check_artifact sqlite \
   "$ROOT/scripts/build-sqlite.sh" \
-  "sqlite-root" \
   "sqlite.inputs-hash" \
-  rebuild
+  rebuild \
+  "$BOOTSTRAP_CACHES" \
+  "build/sqlite-root"
 
 check_artifact nginx \
   "$ROOT/scripts/build-nginx.sh" \
-  "nginx-root" \
   "nginx.inputs-hash" \
-  rebuild
+  rebuild \
+  "$BOOTSTRAP_CACHES" \
+  "build/nginx-root"
 
 check_artifact openssl \
   "$ROOT/scripts/build-openssl.sh" \
-  "openssl-root" \
   "openssl.inputs-hash" \
-  rebuild
+  rebuild \
+  "$BOOTSTRAP_CACHES" \
+  "build/openssl-root"
+
+check_artifact ncurses \
+  "$ROOT/scripts/build-ncurses.sh" \
+  "ncurses.inputs-hash" \
+  rebuild \
+  "$PORTS_CACHES" \
+  "build/ncdemo.elf"
+
+check_artifact glib \
+  "$ROOT/scripts/build-glib.sh" \
+  "glib.inputs-hash" \
+  rebuild \
+  "$PORTS_CACHES" \
+  "build/glibdemo.elf"
+
+check_artifact mc \
+  "$ROOT/scripts/build-mc.sh" \
+  "mc.inputs-hash" \
+  rebuild \
+  "$PORTS_CACHES" \
+  "build/mc.elf"
+
+check_artifact bash \
+  "$ROOT/scripts/build-bash.sh" \
+  "bash.inputs-hash" \
+  rebuild \
+  "$PORTS_CACHES" \
+  "build/bash.elf"
+
+check_artifact zsh \
+  "$ROOT/scripts/build-zsh.sh" \
+  "zsh.inputs-hash" \
+  rebuild \
+  "$PORTS_CACHES" \
+  "build/zsh.elf"
+
+# Weekly ports gate must own the five harnesses (not make test / nightly).
+if ! grep -Fq 'ports-test' "$MAKEFILE"; then
+  echo "FAIL: Makefile must define ports-test for the heavy ports gate" >&2
+  exit 1
+fi
+if ! grep -Fq 'make ports-test' "$CI_PORTS" && ! grep -Fq 'ports-test' "$CI_PORTS"; then
+  echo "FAIL: ci-ports.yml must run make ports-test" >&2
+  exit 1
+fi
+# make test must not rebuild the INCLUDE_* heavy-ports image.
+test_body="$(awk '/^test:/{flag=1; next} flag && /^[^[:space:]#]/{exit} flag{print}' "$MAKEFILE")"
+if grep -E -q 'INCLUDE_NCURSES=1|INCLUDE_GLIB=1|INCLUDE_MC=1|INCLUDE_BASH=1|INCLUDE_ZSH=1' <<<"$test_body"; then
+  echo "FAIL: make test must not enable INCLUDE_{NCURSES,GLIB,MC,BASH,ZSH} (moved to ports-test)" >&2
+  exit 1
+fi
+for harness in ncurses_test.sh glib_test.sh mc_test.sh bash_test.sh zsh_test.sh; do
+  if grep -Fq "./tests/$harness" <<<"$test_body"; then
+    echo "FAIL: make test must not run $harness (moved to ports-test)" >&2
+    exit 1
+  fi
+  ports_body="$(awk '/^ports-test:/{flag=1; next} flag && /^[^[:space:]#]/{exit} flag{print}' "$MAKEFILE")"
+  if ! grep -Fq "./tests/$harness" <<<"$ports_body"; then
+    echo "FAIL: ports-test must run $harness" >&2
+    exit 1
+  fi
+done
 
 # --- CI bootstrap must not skip busybox on mere file presence ----------------
 if ! grep -Fq 'artifact-inputs-hash.sh' "$BOOTSTRAP"; then
@@ -326,11 +399,7 @@ if ! grep -q 'inputs-hash\|inputs-expected\|STALE\|UNSTAMPED' <<<"$recipe"; then
 fi
 
 # Port binary recipes must content-check (rebuild path)
-for target in 'sqlite-root/usr/bin/sqlite3' 'nginx-root/usr/sbin/nginx' 'openssl-root/usr/lib/libssl.a'; do
-  # Recipes are attached to $(SQLITE_BIN) etc.; match the stamp check near each.
-  :
-done
-for name in sqlite nginx openssl; do
+for name in sqlite nginx openssl ncurses glib mc bash zsh; do
   if ! awk -v n="$name" '
     $0 ~ "\\$\\(BUILD\\)/" n "\\.inputs-expected" { seen_exp=1 }
     $0 ~ n "\\.inputs-hash" && /cmp/ { seen_cmp=1 }
@@ -343,4 +412,4 @@ for name in sqlite nginx openssl; do
   fi
 done
 
-echo "PASS: ported/runtime inputs are content-tracked for busybox sqlite nginx openssl"
+echo "PASS: ported/runtime inputs are content-tracked for busybox sqlite nginx openssl ncurses glib mc bash zsh"

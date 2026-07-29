@@ -824,7 +824,7 @@ BASE_EXEC_ELFS := \
 	$(BASH_BASE_ELF) \
 	$(ZSH_BASE_ELF)
 
-.PHONY: ncurses ncurses-test glib glib-test mc mc-test bash bash-test zsh zsh-test
+.PHONY: ncurses ncurses-test glib glib-test mc mc-test bash bash-test zsh zsh-test ports-test
 .PHONY: build run debug gdb test docs-test host-test ci-fast release-manifest ci-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-data-pci-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test uefi-kinstall-test uefi-os-install-test datafs-test datafs-fsync-test datafs-sqlite-test v1-volume-test v2-label-test v2-manifest-test v2-anchor-test v3-mount-test v3-persist-test v3-deny-test v4-pci-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test saturation-test saturation-smp-test smp-race-stress-test edge-stress-test el0-fault-backtrace-test httpd-load-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-ungate-test llm-smp-test s5-test c5-test c5-mmio-grant-test c5-userland-driver-test c5-tty-inject-test ns1-net-grant-test ns2-net-driver-test ns3-net-service-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test init-restart-rate-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-rsync-repo-fixture rsync-test ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: build run debug gdb test docs-test host-test ci-fast release-manifest ci-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-data-pci-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test datafs-test datafs-fsync-test datafs-sqlite-test v1-volume-test v2-label-test v2-manifest-test v2-anchor-test v3-mount-test v3-persist-test v3-deny-test v4-pci-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test saturation-test saturation-smp-test smp-race-stress-test edge-stress-test el0-fault-backtrace-test httpd-load-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-ungate-test llm-smp-test s5-test c5-test c5-mmio-grant-test c5-userland-driver-test c5-tty-inject-test c6-cell-accounting-test c6-cell-create-test c6-cell-namespace-test c6-cell-lifecycle-test c6-cell-service-test c7-cell-pagecap-test c7-cell-handlecap-test c7-cell-supervisor-test c7-cell-realservice-test ns1-net-grant-test ns2-net-driver-test ns3-net-service-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test init-restart-rate-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-rsync-repo-fixture rsync-test ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
 .PHONY: build run debug gdb test docs-test host-test ci-fast release-manifest ci-test errno-test cubestore-test swiftcube-test phase1-roadmap-test api-complete-examples-test examples-verification-test stability-coverage-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test signed-image-test panic-loop-test qemu-virt-hardware-map-test log-export-test clock-test gicv3-test virtio-pci-test h3-ramdisk-test h4-ssh-pci-test h5-acpi-test hetzner-data-pci-test hetzner-deploy-test data-persist-test crond-test reboot-test os-stage-test os-update-test os-confirm-test os-coordinate-test os-coordinate-activate-test uefi-kinstall-test uefi-os-install-test datafs-test datafs-fsync-test datafs-sqlite-test nginx-test nginx-data-test nginx-tls-test site-seed-test site-bundle-test site-update-test acme-mock-test acme-persist-test acme-verify-test tls-verify-test tls-truststore-test mprotect-test largemmap-test mmapreserve-test mapfixed-test pthread-test futex-test threadsync-test select-test eventfd-test qw4-badge-test pty-test ptysig-test epoll-test uvwake-test uvsem-test uvmutex-test uvthreadname-test uvthreadstack-test uvbarrier-test uvcond-test uvsocketpair-test uvsignal-test uvatfork-test signal-test socket-test usb-xhci-test smp-state-audit smp-mailbox-layout smp-release-guard smp-release-contract smp-s1-preflight smp-test orphan-reap-test procmax-test smp-resource-stress-test smp-headroom-test smp-uefi-test s4-resource-stress-test saturation-test saturation-smp-test smp-race-stress-test edge-stress-test el0-fault-backtrace-test httpd-load-test smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-ungate-test llm-smp-test s5-test c5-test c5-mmio-grant-test c5-userland-driver-test c5-tty-inject-test ns1-net-grant-test ns2-net-driver-test ns3-net-service-test c5-driver-service-test la1-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test s0-test s0c-test s1-test sshkey ssh-transport-test sshd-transport-test sshd-usr-bin-exec-test sshd-sftp-test sshd-sftp-write-test sshd-interactive-test sshd-host-key-rotation-test sshd-kex-seed-test sshd-authorized-keys-test sshd-supervision-test init-restart-rate-test sshd-runtime-entropy-test net-static-ipv6-test model clean tools-check newlib busybox busybox-check uefi uefi-run disk disk-run hetzner-run base-image syspack syspack-test swpkg swpkg-header-integrity-test sitepack sitepack-test swsite-test pkgstore pkgrepo swport ports-catalog-test ports-recipe-test ports-lua-repo-fixture ports-zlib-repo-fixture ports-bzip2-repo-fixture ports-zstd-repo-fixture ports-xz-repo-fixture ports-libarchive-repo-fixture ports-ca-certificates-repo-fixture ports-openssl-repo-fixture ports-pcre2-repo-fixture ports-tzdata-repo-fixture ports-curl-repo-fixture ports-rsync-repo-fixture rsync-test ports-nginx-repo-fixture ports-sqlite-repo-fixture node-configure-probe ports-seed-repo-fixture ports-static-host-publish ports-hosted-url-verify ports-hosted-url-verify-test package-fixture package-store-fixture package-repo-fixture package-overlay-test package-store-test package-local-install-fixture package-lua-install-fixture package-local-install-test package-remove-test package-repo-install-test package-lua-repo-install-test package-ports-seed-repo-install-test package-static-host-repo-install-test package-static-host-dns-repo-install-test package-hosted-url-install-test
@@ -2752,13 +2752,8 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(RUNTEST) ./tests/nginx_test.sh
 	$(RUNTEST) ./tests/nginx_data_test.sh
 	$(RUNTEST) ./tests/nginx_tls_test.sh
-	rm -f $(BASE_IMG); $(MAKE) base-image INCLUDE_NCURSES=1 INCLUDE_GLIB=1 INCLUDE_MC=1 INCLUDE_BASH=1 INCLUDE_ZSH=1
-	$(RUNTEST) ./tests/ncurses_test.sh
-	$(RUNTEST) ./tests/glib_test.sh
-	$(RUNTEST) ./tests/mc_test.sh
-	$(RUNTEST) ./tests/bash_test.sh
-	$(RUNTEST) ./tests/zsh_test.sh
-	rm -f $(BASE_IMG); $(MAKE) base-image
+	# Heavy app/shell ports (ncurses/glib/mc/bash/zsh) live in `make ports-test`
+	# (weekly CI gate). They are not on the daily `make test` critical path.
 	$(RUNTEST) ./tests/package_overlay_test.sh
 	$(RUNTEST) ./tests/pkg_store_boot_test.sh
 	$(RUNTEST) ./tests/pkg_local_install_test.sh
@@ -3186,6 +3181,24 @@ mc-test: build $(QEMU_DTB)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_NCURSES=1 INCLUDE_GLIB=1 INCLUDE_MC=1
 	$(RUNTEST) ./tests/mc_test.sh
+
+# Weekly heavy-ports gate: ncurses + GLib + MC + bash + zsh. Not part of
+# `make test` / nightly (each cross-build is slow and the product profile treats
+# these as secondary to application/AI hosting). One local command builds any
+# missing/stale port artifacts, packs them, and runs all five harnesses.
+# Content-stamped like busybox/sqlite so a runtime-shim change cannot reuse a
+# stale binary. CI: `.github/workflows/ci-ports.yml` (weekly + workflow_dispatch).
+ports-test: build $(QEMU_DTB) \
+		$(BUILD)/ncdemo.elf $(BUILD)/glibdemo.elf $(BUILD)/mc.elf \
+		$(BUILD)/bash.elf $(BUILD)/zsh.elf
+	rm -f $(BASE_IMG)
+	$(MAKE) base-image INCLUDE_NCURSES=1 INCLUDE_GLIB=1 INCLUDE_MC=1 INCLUDE_BASH=1 INCLUDE_ZSH=1
+	$(RUNTEST) ./tests/ncurses_test.sh
+	$(RUNTEST) ./tests/glib_test.sh
+	$(RUNTEST) ./tests/mc_test.sh
+	$(RUNTEST) ./tests/bash_test.sh
+	$(RUNTEST) ./tests/zsh_test.sh
+	rm -f $(BASE_IMG); $(MAKE) base-image
 
 # W2: nginx serves a web root + logs from the persistent /data tier; content
 # survives reboot. Needs the base image and host curl.
@@ -4550,35 +4563,93 @@ $(BUILD)/busybox.elf: $(BUILD)/busybox.inputs-expected
 		exit 1; \
 	fi
 
+# Heavy app/shell ports (ncurses/glib/mc/bash/zsh): content-stamped like
+# sqlite/nginx/openssl. Cache restore can rehydrate an older .elf whose mtime
+# looks fresh; the stamp must match scripts/artifact-inputs-hash.sh or we
+# rebuild. Phony force targets always rebuild; the .elf recipes skip when fresh.
+$(BUILD)/ncurses.inputs-expected: .PORT_INPUTS_FORCE | $(BUILD)/.dir
+	@./scripts/artifact-inputs-hash.sh ncurses >$@.tmp
+	@if ! cmp -s $@.tmp $@ 2>/dev/null; then mv $@.tmp $@; else rm -f $@.tmp; fi
+
+$(BUILD)/glib.inputs-expected: .PORT_INPUTS_FORCE | $(BUILD)/.dir
+	@./scripts/artifact-inputs-hash.sh glib >$@.tmp
+	@if ! cmp -s $@.tmp $@ 2>/dev/null; then mv $@.tmp $@; else rm -f $@.tmp; fi
+
+$(BUILD)/mc.inputs-expected: .PORT_INPUTS_FORCE | $(BUILD)/.dir
+	@./scripts/artifact-inputs-hash.sh mc >$@.tmp
+	@if ! cmp -s $@.tmp $@ 2>/dev/null; then mv $@.tmp $@; else rm -f $@.tmp; fi
+
+$(BUILD)/bash.inputs-expected: .PORT_INPUTS_FORCE | $(BUILD)/.dir
+	@./scripts/artifact-inputs-hash.sh bash >$@.tmp
+	@if ! cmp -s $@.tmp $@ 2>/dev/null; then mv $@.tmp $@; else rm -f $@.tmp; fi
+
+$(BUILD)/zsh.inputs-expected: .PORT_INPUTS_FORCE | $(BUILD)/.dir
+	@./scripts/artifact-inputs-hash.sh zsh >$@.tmp
+	@if ! cmp -s $@.tmp $@ 2>/dev/null; then mv $@.tmp $@; else rm -f $@.tmp; fi
+
 # NC1: cross-build static ncurses + the ncdemo proof binary.
 ncurses:
 	./scripts/build-ncurses.sh
 
 # ncdemo.elf is produced by `make ncurses` (slow; needs newlib + network + host
-# tic/infocmp). Like busybox it must run before `make base-image`.
-$(BUILD)/ncdemo.elf:
-	@echo "ncurses demo not built. Run: make ncurses" >&2; exit 1
+# tic/infocmp). Content stamp covers tree-owned runtime + recipe + ncdemo.c.
+$(BUILD)/ncdemo.elf: $(BUILD)/ncurses.inputs-expected .PORT_INPUTS_FORCE $(SYSROOT)/lib/libc.a
+	@if [ -f $@ ] && [ -f $(BUILD)/ncurses.inputs-hash ] \
+	    && cmp -s $(BUILD)/ncurses.inputs-hash $(BUILD)/ncurses.inputs-expected; then \
+		exit 0; \
+	fi
+	@if [ -f $@ ] && [ ! -f $(BUILD)/ncurses.inputs-hash ]; then \
+		echo "ncurses is UNSTAMPED (no inputs-hash); rebuilding" >&2; \
+	elif [ -f $@ ]; then \
+		echo "ncurses is STALE (tree inputs changed since it was built); rebuilding" >&2; \
+		echo "  recorded: $$(tr -d '[:space:]' < $(BUILD)/ncurses.inputs-hash 2>/dev/null)" >&2; \
+		echo "  expected: $$(cat $(BUILD)/ncurses.inputs-expected)" >&2; \
+	fi
+	./scripts/build-ncurses.sh
 
 # GL1: cross-build static GLib 2.56 core + the glibdemo proof binary.
 glib:
 	./scripts/build-glib.sh
 
 # glibdemo.elf is produced by `make glib` (slow; needs newlib + zlib + network).
-# Like busybox it must run before `make base-image`.
-$(BUILD)/glibdemo.elf:
-	@echo "glib demo not built. Run: make glib" >&2; exit 1
+# Content stamp covers tree-owned runtime + recipe + glibdemo.c.
+$(BUILD)/glibdemo.elf: $(BUILD)/glib.inputs-expected .PORT_INPUTS_FORCE $(SYSROOT)/lib/libc.a
+	@if [ -f $@ ] && [ -f $(BUILD)/glib.inputs-hash ] \
+	    && cmp -s $(BUILD)/glib.inputs-hash $(BUILD)/glib.inputs-expected; then \
+		exit 0; \
+	fi
+	@if [ -f $@ ] && [ ! -f $(BUILD)/glib.inputs-hash ]; then \
+		echo "glib is UNSTAMPED (no inputs-hash); rebuilding" >&2; \
+	elif [ -f $@ ]; then \
+		echo "glib is STALE (tree inputs changed since it was built); rebuilding" >&2; \
+		echo "  recorded: $$(tr -d '[:space:]' < $(BUILD)/glib.inputs-hash 2>/dev/null)" >&2; \
+		echo "  expected: $$(cat $(BUILD)/glib.inputs-expected)" >&2; \
+	fi
+	./scripts/build-glib.sh
 
 # MC1: cross-build Midnight Commander (needs `make ncurses` + `make glib` first).
-mc:
+mc: $(BUILD)/ncdemo.elf $(BUILD)/glibdemo.elf
 	./scripts/build-mc.sh
 
 # mc.elf is produced by `make mc` (slow; needs newlib + ncurses + glib + zlib).
-# Like busybox it must run before `make base-image`.
-$(BUILD)/mc.elf:
-	@echo "Midnight Commander not built. Run: make mc" >&2; exit 1
+# Depends on content-fresh ncdemo/glibdemo so sysroot libs exist when rebuilding.
+$(BUILD)/mc.elf: $(BUILD)/mc.inputs-expected .PORT_INPUTS_FORCE \
+		$(BUILD)/ncdemo.elf $(BUILD)/glibdemo.elf $(SYSROOT)/lib/libc.a
+	@if [ -f $@ ] && [ -f $(BUILD)/mc.inputs-hash ] \
+	    && cmp -s $(BUILD)/mc.inputs-hash $(BUILD)/mc.inputs-expected; then \
+		exit 0; \
+	fi
+	@if [ -f $@ ] && [ ! -f $(BUILD)/mc.inputs-hash ]; then \
+		echo "mc is UNSTAMPED (no inputs-hash); rebuilding" >&2; \
+	elif [ -f $@ ]; then \
+		echo "mc is STALE (tree inputs changed since it was built); rebuilding" >&2; \
+		echo "  recorded: $$(tr -d '[:space:]' < $(BUILD)/mc.inputs-hash 2>/dev/null)" >&2; \
+		echo "  expected: $$(cat $(BUILD)/mc.inputs-expected)" >&2; \
+	fi
+	./scripts/build-mc.sh
 
 # SH1: cross-build GNU bash (needs `make ncurses` first for readline + curses).
-bash:
+bash: $(BUILD)/ncdemo.elf
 	./scripts/build-bash.sh
 
 # bash-test: boot the base image and verify bash starts, runs compound commands,
@@ -4589,12 +4660,24 @@ bash-test: build $(QEMU_DTB)
 	$(RUNTEST) ./tests/bash_test.sh
 
 # bash.elf is produced by `make bash` (needs newlib + ncurses + network).
-# Must run before `make base-image`.
-$(BUILD)/bash.elf:
-	@echo "bash not built. Run: make bash" >&2; exit 1
+# Depends on content-fresh ncdemo.elf so libncurses.a exists when rebuilding.
+$(BUILD)/bash.elf: $(BUILD)/bash.inputs-expected .PORT_INPUTS_FORCE \
+		$(BUILD)/ncdemo.elf $(SYSROOT)/lib/libc.a
+	@if [ -f $@ ] && [ -f $(BUILD)/bash.inputs-hash ] \
+	    && cmp -s $(BUILD)/bash.inputs-hash $(BUILD)/bash.inputs-expected; then \
+		exit 0; \
+	fi
+	@if [ -f $@ ] && [ ! -f $(BUILD)/bash.inputs-hash ]; then \
+		echo "bash is UNSTAMPED (no inputs-hash); rebuilding" >&2; \
+	elif [ -f $@ ]; then \
+		echo "bash is STALE (tree inputs changed since it was built); rebuilding" >&2; \
+		echo "  recorded: $$(tr -d '[:space:]' < $(BUILD)/bash.inputs-hash 2>/dev/null)" >&2; \
+		echo "  expected: $$(cat $(BUILD)/bash.inputs-expected)" >&2; \
+	fi
+	./scripts/build-bash.sh
 
 # SH2: cross-build zsh (needs `make ncurses` first for ZLE + terminal library).
-zsh:
+zsh: $(BUILD)/ncdemo.elf
 	./scripts/build-zsh.sh
 
 # zsh-test: boot the base image and verify zsh starts, runs arrays/functions,
@@ -4605,9 +4688,21 @@ zsh-test: build $(QEMU_DTB)
 	$(RUNTEST) ./tests/zsh_test.sh
 
 # zsh.elf is produced by `make zsh` (needs newlib + ncurses + network).
-# Must run before `make base-image`.
-$(BUILD)/zsh.elf:
-	@echo "zsh not built. Run: make zsh" >&2; exit 1
+# Depends on content-fresh ncdemo.elf so libncurses.a exists when rebuilding.
+$(BUILD)/zsh.elf: $(BUILD)/zsh.inputs-expected .PORT_INPUTS_FORCE \
+		$(BUILD)/ncdemo.elf $(SYSROOT)/lib/libc.a
+	@if [ -f $@ ] && [ -f $(BUILD)/zsh.inputs-hash ] \
+	    && cmp -s $(BUILD)/zsh.inputs-hash $(BUILD)/zsh.inputs-expected; then \
+		exit 0; \
+	fi
+	@if [ -f $@ ] && [ ! -f $(BUILD)/zsh.inputs-hash ]; then \
+		echo "zsh is UNSTAMPED (no inputs-hash); rebuilding" >&2; \
+	elif [ -f $@ ]; then \
+		echo "zsh is STALE (tree inputs changed since it was built); rebuilding" >&2; \
+		echo "  recorded: $$(tr -d '[:space:]' < $(BUILD)/zsh.inputs-hash 2>/dev/null)" >&2; \
+		echo "  expected: $$(cat $(BUILD)/zsh.inputs-expected)" >&2; \
+	fi
+	./scripts/build-zsh.sh
 
 busybox-check:
 	./scripts/busybox-check.sh

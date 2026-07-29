@@ -32,7 +32,7 @@ SwiftOS uses three test shapes:
 | Static guard | Source-level invariants and milestone contracts | `tests/smp_release_guard_test.sh` |
 | QEMU acceptance test | Boot, userland, VFS, networking, packages, services, and devices | `tests/boot_test.sh` |
 
-The full gate is:
+The primary full gate is:
 
 ```sh
 make test
@@ -44,6 +44,16 @@ the current user-visible command and service checks.
 It also runs a full-gate coverage guard so memory/resource, hardware/SMP,
 security/isolation, network, package, update/rollback, C5, and UEFI coverage
 cannot silently fall out of the shipped gate.
+
+Heavy optional app/shell ports (ncurses, GLib, Midnight Commander, bash, zsh)
+are **not** part of `make test`. They live on a separate weekly gate:
+
+```sh
+make ports-test
+```
+
+CI schedules that as `ci · ports` (weekly + `workflow_dispatch`). See
+[Heavy ports gate](#heavy-ports-gate) below.
 
 ## Choose A Test Scope
 
@@ -59,9 +69,10 @@ touches shared behavior or a release candidate.
 | One guest command | Command-specific QEMU test | Shell, VFS, process, or capability behavior changes broadly |
 | Network service or client | Service-specific network test, such as `make sshd-supervision-test` for SSHD restart behavior | Shared socket, virtio-net, DNS, TLS, or polling behavior changes |
 | Package or ports workflow | Matching package/ports make target | Repository metadata, package-store activation, or seed catalog changes |
+| Optional heavy app/shell ports (ncurses, GLib, MC, bash, zsh) | `make ports-test` (or a focused `make ncurses-test` / `glib-test` / `mc-test` / `bash-test` / `zsh-test`) | Runtime shim, newlib syscalls, or those port build scripts change |
 | Update-store or kernel-slot workflow | Matching `ab_*` or `uefi_k*` test | Boot selection, rollback, or release-candidate policy changes |
 | Security boundary | Focused capability, handle, mmap, package, or C5 test | The boundary touches syscall, VFS, process, or driver-service internals |
-| Release candidate | `make test` plus the deployment validation matrix | Always |
+| Release candidate | `make test` plus the deployment validation matrix; run `make ports-test` when those ports matter to the candidate | Always |
 
 ## Quick Start
 
@@ -190,6 +201,45 @@ Current full-gate coverage includes:
 
 If `make test` fails, keep the first failing command and its log. Do not keep
 rerunning the whole suite before understanding the first failure.
+
+## Heavy ports gate
+
+These five ports are secondary to the flagship application and AI hosting
+profile. Each is a slow from-source cross-build that embeds the freestanding
+runtime shim (`userland/lib/newlib_syscalls.c`, `userland/compat/stubs.c`), so
+putting them on the daily critical path would both lengthen nightly (~60+ min
+already) and couple every runtime-shim edit to GLib/MC rebuilds via cache key
+churn.
+
+| Port | Focused target | Harness |
+| --- | --- | --- |
+| ncurses + `/bin/ncdemo` | `make ncurses-test` | `tests/ncurses_test.sh` |
+| GLib + `/bin/glibdemo` | `make glib-test` | `tests/glib_test.sh` |
+| Midnight Commander | `make mc-test` | `tests/mc_test.sh` |
+| GNU bash | `make bash-test` | `tests/bash_test.sh` |
+| zsh | `make zsh-test` | `tests/zsh_test.sh` |
+
+Aggregate (one local command; builds any missing or content-stale port first):
+
+```sh
+make ports-test
+```
+
+**Who runs it**
+
+| Gate | Command | Schedule |
+| --- | --- | --- |
+| Local / operator | `make ports-test` | On demand when those ports or the runtime shim change |
+| CI `ci · ports` | `make ports-test` | Weekly (Sunday 04:00 UTC) and `workflow_dispatch` |
+| CI `ci · nightly` | `make test` | Daily — does **not** include the five harnesses |
+| CI `ci · fast` | `make ci-test` | Every PR / push to main — unchanged |
+
+Coverage must not silently disappear: the five harnesses still exist unchanged;
+only their scheduling gate moved. Content stamps (`build/<name>.inputs-hash`
+via `scripts/artifact-inputs-hash.sh`) refuse a stale port binary after a
+runtime-shim change, same mechanism as busybox/sqlite/nginx/openssl. The
+weekly workflow keeps its own Actions cache for the port build outputs
+(separate from the bootstrap cache).
 
 ## Focused Test Matrix
 

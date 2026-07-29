@@ -138,5 +138,10 @@ undefined="$("$NM" -u "$SRC/src/mc")"
 mkdir -p "$ROOT/build/mc-skins"
 cp "$SRC/misc/skins/default.ini" "$ROOT/build/mc-skins/default.ini"
 
+# Content stamp so Makefile / CI refuse a binary whose tree-owned runtime
+# inputs moved (mtimes alone are unreliable after Actions cache restore).
+"$ROOT/scripts/artifact-inputs-hash.sh" mc >"$ROOT/build/mc.inputs-hash"
+
 echo "Built $ROOT/build/mc.elf (mc ${VERSION}, ncurses + glib) + default skin"
+echo "inputs-hash $(cat "$ROOT/build/mc.inputs-hash")"
 "$READELF" -h "$ROOT/build/mc.elf" | grep -E 'Type:|Entry'

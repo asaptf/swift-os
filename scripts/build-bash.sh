@@ -152,5 +152,10 @@ undefined="$("$NM" -u "$SRC/bash" 2>/dev/null)"
 "$READELF" -h "$SRC/bash" | grep -q 'Machine:[[:space:]]*AArch64' || fail "bash is not an AArch64 ELF"
 "$STRIP" "$SRC/bash" -o "$ROOT/build/bash.elf"
 
+# Content stamp so Makefile / CI refuse a binary whose tree-owned runtime
+# inputs moved (mtimes alone are unreliable after Actions cache restore).
+"$ROOT/scripts/artifact-inputs-hash.sh" bash >"$ROOT/build/bash.inputs-hash"
+
 echo "Built $ROOT/build/bash.elf (bash ${VERSION}, --without-job-control, bundled readline + ncurses)"
+echo "inputs-hash $(cat "$ROOT/build/bash.inputs-hash")"
 "$READELF" -h "$ROOT/build/bash.elf" | grep -E 'Type:|Entry|Size'
