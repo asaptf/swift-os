@@ -2548,14 +2548,24 @@ virtio-transport-test: | $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/virtio_transport_test.swift kernel/drivers/virtio_transport_ops.swift -o $(BUILD)/virtio_transport_test
 	$(BUILD)/virtio_transport_test
 
+# Narrow-retry wrapper for in-QEMU boot harnesses. Retries only when the
+# guest never produced a verdict (DEMO_BOOT_TIMEOUT boot-phase await, or
+# no PASS:/FAIL: line). Substantive FAIL: is never retried. Host/static
+# gates invoke scripts directly (not via RUNTEST). See
+# tests/lib/run_qemu_harness.sh and tests/run_qemu_harness_retry_test.sh.
+RUNTEST := ./tests/lib/run_qemu_harness.sh
+export QEMU_HARNESS_RETRY_LOG := $(CURDIR)/$(BUILD)/qemu-harness-retries.log
+
 # P0: fast host-only gate (no QEMU).
 host-test: docs-test errno-test page-allocator-refcount-lifecycle-test elf-loader-test user-access-test virtio-transport-test swiftcube-test
 
 # P0: CI smoke — build + minimal boot/log acceptance.
 ci-fast: docs-test build $(QEMU_DTB) base-image
-	./tests/boot_test.sh
-	./tests/boot_selftest_skip_test.sh
-	./tests/log_export_test.sh
+	@rm -f $(QEMU_HARNESS_RETRY_LOG)
+	$(RUNTEST) ./tests/boot_test.sh
+	$(RUNTEST) ./tests/boot_selftest_skip_test.sh
+	$(RUNTEST) ./tests/log_export_test.sh
+	@$(RUNTEST) --print-summary
 
 release-manifest: build base-image $(QEMU_DTB) $(RELEASEMANIFEST)
 	SWOS_TARGET_TRIPLE=$(TRIPLE) \
@@ -2576,9 +2586,11 @@ stability-coverage-test: | $(BUILD)/.dir
 shmring-test: build $(QEMU_DTB_SMP4) disk base-image | $(BUILD)/.dir
 	$(HOST_SWIFTC) -D SHMRING_HOST tests/shmring_test.swift kernel/ipc/shmring.swift -o $(BUILD)/shmring_test
 	$(BUILD)/shmring_test
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/shmring_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/shmring_test.sh
 
 test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixture package-local-install-fixture $(SWPKG) $(UPDATESTORE) $(MODEL_BIN) $(MODEL_TOK) $(MODEL_Q8) $(MODEL15_Q8)
+	@rm -f $(QEMU_HARNESS_RETRY_LOG)
+	./tests/run_qemu_harness_retry_test.sh
 	$(HOST_SWIFTC) tests/page_allocator_test.swift kernel/mm/page_allocator.swift -o $(BUILD)/page_allocator_test
 	$(BUILD)/page_allocator_test
 	$(MAKE) page-allocator-refcount-lifecycle-test
@@ -2657,132 +2669,132 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(HOST_SWIFTC) -O tests/x509_chain_test.swift userland/lib/x509.swift userland/lib/x509_verify.swift userland/lib/rsa.swift kernel/crypto/p256.swift kernel/crypto/sha256.swift -o $(BUILD)/x509_chain_test
 	$(BUILD)/x509_chain_test
 	./tests/tls_verify_test.sh
-	./tests/tls_truststore_test.sh
+	$(RUNTEST) ./tests/tls_truststore_test.sh
 	./tests/userland_elf_test.sh
-	./tests/boot_test.sh
-	./tests/boot_selftest_skip_test.sh
-	./tests/boot_selftest_optin_test.sh
-	./tests/log_export_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/s4_resource_stress_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_resource_stress_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/malloc_lock_tls_test.sh
-	SMP_CPUS=1 SMP_DTB=$(QEMU_DTB) ./tests/saturation_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_race_stress_test.sh
-	SMP_CPUS=1 SMP_DTB=$(QEMU_DTB) ./tests/edge_stress_test.sh
-	./tests/el0_fault_backtrace_test.sh
-	./tests/spawn_self_exec_test.sh
-	bash ./tests/cow_test.sh
-	./tests/tty_test.sh
-	./tests/virtio_blk_test.sh
-	./tests/virtio_net_test.sh
-	./tests/netinfo_test.sh
+	$(RUNTEST) ./tests/boot_test.sh
+	$(RUNTEST) ./tests/boot_selftest_skip_test.sh
+	$(RUNTEST) ./tests/boot_selftest_optin_test.sh
+	$(RUNTEST) ./tests/log_export_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_boot_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/s4_resource_stress_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_resource_stress_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/malloc_lock_tls_test.sh
+	SMP_CPUS=1 SMP_DTB=$(QEMU_DTB) $(RUNTEST) ./tests/saturation_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_race_stress_test.sh
+	SMP_CPUS=1 SMP_DTB=$(QEMU_DTB) $(RUNTEST) ./tests/edge_stress_test.sh
+	$(RUNTEST) ./tests/el0_fault_backtrace_test.sh
+	$(RUNTEST) ./tests/spawn_self_exec_test.sh
+	$(RUNTEST) bash ./tests/cow_test.sh
+	$(RUNTEST) ./tests/tty_test.sh
+	$(RUNTEST) ./tests/virtio_blk_test.sh
+	$(RUNTEST) ./tests/virtio_net_test.sh
+	$(RUNTEST) ./tests/netinfo_test.sh
 	# IPv6 (net-ipv6 slice): host net_test covers the protocol core aggressively
 	# (NDP, RA, EH chains, DAD, malformed packets). QEMU smoke tests verify
 	# link-local/NDP setup; hosts that cannot bind IPv6 hostfwd (probe, not
 	# OS-name) fall back to that smoke instead of true hostfwd echo.
-	./tests/ipv6_smoke_test.sh
-	./tests/net_static_ipv6_test.sh
-	./tests/ipv6_udp_echo_test.sh
-	./tests/ipv6_tcp_echo_test.sh
-	./tests/udp_echo_test.sh
-	./tests/ipc_socket_transfer_test.sh
-	./tests/qw5_rights_intersection_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/ipc_call_test.sh
-	./tests/qw4_badge_test.sh
-	./tests/tcp_echo_test.sh
-	./tests/tcp_connect_test.sh
-	./tests/tcpget_by_name_test.sh
-	./tests/tls_test.sh
-	./tests/httpd_test.sh
-	./tests/httpd_keepalive_test.sh
-	./tests/httpd_load_test.sh
-	./tests/max_endpoints_test.sh
-	./tests/ssh_transport_test.sh
-	./tests/ssh_runtime_entropy_test.sh
-	./tests/sshd_transport_test.sh
-	./tests/sshd_sftp_test.sh
-	./tests/sshd_sftp_write_test.sh
-	./tests/sshd_runtime_entropy_test.sh
-	./tests/sshd_ipv6_listener_test.sh
-	./tests/sshd_ipv6_supervision_test.sh
-	./tests/sshd_deploy_preflight_test.sh
-	./tests/hetzner_deploy_bundle_test.sh
-	bash ./tests/net_zero_copy_throughput_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/shmring_test.sh
-	./tests/dns_test.sh
-	./tests/vfs_disk_test.sh
-	./tests/disk_exec_test.sh
-	./tests/gicv3_test.sh
-	./tests/virtio_pci_test.sh
-	./tests/h3_ramdisk_test.sh
-	./tests/h4_ssh_pci_test.sh
-	./tests/h5_acpi_test.sh
+	$(RUNTEST) ./tests/ipv6_smoke_test.sh
+	$(RUNTEST) ./tests/net_static_ipv6_test.sh
+	$(RUNTEST) ./tests/ipv6_udp_echo_test.sh
+	$(RUNTEST) ./tests/ipv6_tcp_echo_test.sh
+	$(RUNTEST) ./tests/udp_echo_test.sh
+	$(RUNTEST) ./tests/ipc_socket_transfer_test.sh
+	$(RUNTEST) ./tests/qw5_rights_intersection_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/ipc_call_test.sh
+	$(RUNTEST) ./tests/qw4_badge_test.sh
+	$(RUNTEST) ./tests/tcp_echo_test.sh
+	$(RUNTEST) ./tests/tcp_connect_test.sh
+	$(RUNTEST) ./tests/tcpget_by_name_test.sh
+	$(RUNTEST) ./tests/tls_test.sh
+	$(RUNTEST) ./tests/httpd_test.sh
+	$(RUNTEST) ./tests/httpd_keepalive_test.sh
+	$(RUNTEST) ./tests/httpd_load_test.sh
+	$(RUNTEST) ./tests/max_endpoints_test.sh
+	$(RUNTEST) ./tests/ssh_transport_test.sh
+	$(RUNTEST) ./tests/ssh_runtime_entropy_test.sh
+	$(RUNTEST) ./tests/sshd_transport_test.sh
+	$(RUNTEST) ./tests/sshd_sftp_test.sh
+	$(RUNTEST) ./tests/sshd_sftp_write_test.sh
+	$(RUNTEST) ./tests/sshd_runtime_entropy_test.sh
+	$(RUNTEST) ./tests/sshd_ipv6_listener_test.sh
+	$(RUNTEST) ./tests/sshd_ipv6_supervision_test.sh
+	$(RUNTEST) ./tests/sshd_deploy_preflight_test.sh
+	$(RUNTEST) ./tests/hetzner_deploy_bundle_test.sh
+	$(RUNTEST) bash ./tests/net_zero_copy_throughput_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/shmring_test.sh
+	$(RUNTEST) ./tests/dns_test.sh
+	$(RUNTEST) ./tests/vfs_disk_test.sh
+	$(RUNTEST) ./tests/disk_exec_test.sh
+	$(RUNTEST) ./tests/gicv3_test.sh
+	$(RUNTEST) ./tests/virtio_pci_test.sh
+	$(RUNTEST) ./tests/h3_ramdisk_test.sh
+	$(RUNTEST) ./tests/h4_ssh_pci_test.sh
+	$(RUNTEST) ./tests/h5_acpi_test.sh
 	rm -f $(BASE_IMG) $(DISK_IMG); $(MAKE) disk BASE_PROFILE=prod
-	./tests/hetzner_data_pci_test.sh
-	./tests/data_persist_test.sh
-	./tests/datafs_test.sh
-	./tests/init_restart_rate_test.sh
-	./tests/datafs_fsync_test.sh
+	$(RUNTEST) ./tests/hetzner_data_pci_test.sh
+	$(RUNTEST) ./tests/data_persist_test.sh
+	$(RUNTEST) ./tests/datafs_test.sh
+	$(RUNTEST) ./tests/init_restart_rate_test.sh
+	$(RUNTEST) ./tests/datafs_fsync_test.sh
 # The prod base above is headless by design (swos-init supervises and never opens
 # a console session), but the tests below drive a serial login. Restore a default
 # base image while keeping $(DISK_IMG) — the /data disk the datafs/nginx tests need.
 	rm -f $(BASE_IMG); $(MAKE) base-image
-	./tests/datafs_sqlite_test.sh
-	./tests/nginx_test.sh
-	./tests/nginx_data_test.sh
-	./tests/nginx_tls_test.sh
+	$(RUNTEST) ./tests/datafs_sqlite_test.sh
+	$(RUNTEST) ./tests/nginx_test.sh
+	$(RUNTEST) ./tests/nginx_data_test.sh
+	$(RUNTEST) ./tests/nginx_tls_test.sh
 	rm -f $(BASE_IMG); $(MAKE) base-image INCLUDE_NCURSES=1 INCLUDE_GLIB=1 INCLUDE_MC=1 INCLUDE_BASH=1 INCLUDE_ZSH=1
-	./tests/ncurses_test.sh
-	./tests/glib_test.sh
-	./tests/mc_test.sh
-	./tests/bash_test.sh
-	./tests/zsh_test.sh
+	$(RUNTEST) ./tests/ncurses_test.sh
+	$(RUNTEST) ./tests/glib_test.sh
+	$(RUNTEST) ./tests/mc_test.sh
+	$(RUNTEST) ./tests/bash_test.sh
+	$(RUNTEST) ./tests/zsh_test.sh
 	rm -f $(BASE_IMG); $(MAKE) base-image
-	./tests/package_overlay_test.sh
-	./tests/pkg_store_boot_test.sh
-	./tests/pkg_local_install_test.sh
-	./tests/signed_image_test.sh
-	./tests/ab_update_test.sh
-	./tests/ab_persist_test.sh
-	./tests/ab_confirm_test.sh
-	./tests/ab_rollback_test.sh
-	./tests/ab_activate_test.sh
-	./tests/ab_payload_test.sh
-	./tests/multisector_test.sh
-	./tests/ab_stage_test.sh
+	$(RUNTEST) ./tests/package_overlay_test.sh
+	$(RUNTEST) ./tests/pkg_store_boot_test.sh
+	$(RUNTEST) ./tests/pkg_local_install_test.sh
+	$(RUNTEST) ./tests/signed_image_test.sh
+	$(RUNTEST) ./tests/ab_update_test.sh
+	$(RUNTEST) ./tests/ab_persist_test.sh
+	$(RUNTEST) ./tests/ab_confirm_test.sh
+	$(RUNTEST) ./tests/ab_rollback_test.sh
+	$(RUNTEST) ./tests/ab_activate_test.sh
+	$(RUNTEST) ./tests/ab_payload_test.sh
+	$(RUNTEST) ./tests/multisector_test.sh
+	$(RUNTEST) ./tests/ab_stage_test.sh
 	$(MAKE) os-stage-test
 	$(MAKE) os-update-test
 	$(MAKE) os-confirm-test
-	./tests/ab_flush_test.sh
-	./tests/console_login_test.sh
-	./tests/cap_enforce_test.sh
-	./tests/sudo_test.sh
-	./tests/ls_l_test.sh
-	./tests/redirect_test.sh
-	./tests/swift_ls_test.sh
-	./tests/swift_coreutils_test.sh
-	./tests/swift_fileops_test.sh
-	./tests/swift_rm_r_test.sh
-	./tests/swift_chmodown_test.sh
-	./tests/swift_headwc_test.sh
-	./tests/swift_date_test.sh
-	./tests/uptime_test.sh
-	./tests/clock_test.sh
-	./tests/mprotect_test.sh
-	./tests/largemmap_test.sh
-	./tests/mmapreserve_test.sh
-	./tests/sleep_test.sh
-	./tests/crond_test.sh
-	./tests/calc_test.sh
-	./tests/kv_test.sh
-	./tests/llm_run_test.sh
-	./tests/llm_serve_test.sh
-	./tests/simdprobe_test.sh
+	$(RUNTEST) ./tests/ab_flush_test.sh
+	$(RUNTEST) ./tests/console_login_test.sh
+	$(RUNTEST) ./tests/cap_enforce_test.sh
+	$(RUNTEST) ./tests/sudo_test.sh
+	$(RUNTEST) ./tests/ls_l_test.sh
+	$(RUNTEST) ./tests/redirect_test.sh
+	$(RUNTEST) ./tests/swift_ls_test.sh
+	$(RUNTEST) ./tests/swift_coreutils_test.sh
+	$(RUNTEST) ./tests/swift_fileops_test.sh
+	$(RUNTEST) ./tests/swift_rm_r_test.sh
+	$(RUNTEST) ./tests/swift_chmodown_test.sh
+	$(RUNTEST) ./tests/swift_headwc_test.sh
+	$(RUNTEST) ./tests/swift_date_test.sh
+	$(RUNTEST) ./tests/uptime_test.sh
+	$(RUNTEST) ./tests/clock_test.sh
+	$(RUNTEST) ./tests/mprotect_test.sh
+	$(RUNTEST) ./tests/largemmap_test.sh
+	$(RUNTEST) ./tests/mmapreserve_test.sh
+	$(RUNTEST) ./tests/sleep_test.sh
+	$(RUNTEST) ./tests/crond_test.sh
+	$(RUNTEST) ./tests/calc_test.sh
+	$(RUNTEST) ./tests/kv_test.sh
+	$(RUNTEST) ./tests/llm_run_test.sh
+	$(RUNTEST) ./tests/llm_serve_test.sh
+	$(RUNTEST) ./tests/simdprobe_test.sh
 	$(MAKE) model-image-test
 	$(MAKE) model-mount-test
 	$(MAKE) llm-serve-disk-test
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/top_test.sh
 	$(MAKE) c5-test
 	$(MAKE) device-mmio-map-test
 	$(MAKE) c5-mmio-grant-test
@@ -2801,23 +2813,24 @@ test: docs-test build $(QEMU_DTB) $(QEMU_DTB_SMP4) disk base-image package-fixtu
 	$(MAKE) c7-cell-handlecap-test
 	$(MAKE) c7-cell-supervisor-test
 	$(MAKE) c7-cell-realservice-test
-	./tests/busybox_test.sh
-	./tests/threads_test.sh
-	./tests/mmap_test.sh
-	./tests/vi_test.sh
-	UEFI_BOOT=disk ./tests/uefi_boot_test.sh
-	SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
-	./tests/uefi_kernel_ab_test.sh
-	./tests/uefi_kstage_test.sh
-	./tests/uefi_kactivate_test.sh
-	./tests/uefi_kattempt_test.sh
-	./tests/uefi_kconfirm_test.sh
-	./tests/uefi_krollback_test.sh
+	$(RUNTEST) ./tests/busybox_test.sh
+	$(RUNTEST) ./tests/threads_test.sh
+	$(RUNTEST) ./tests/mmap_test.sh
+	$(RUNTEST) ./tests/vi_test.sh
+	UEFI_BOOT=disk $(RUNTEST) ./tests/uefi_boot_test.sh
+	SMP_CPUS=4 UEFI_BOOT=disk $(RUNTEST) ./tests/uefi_boot_test.sh
+	$(RUNTEST) ./tests/uefi_kernel_ab_test.sh
+	$(RUNTEST) ./tests/uefi_kstage_test.sh
+	$(RUNTEST) ./tests/uefi_kactivate_test.sh
+	$(RUNTEST) ./tests/uefi_kattempt_test.sh
+	$(RUNTEST) ./tests/uefi_kconfirm_test.sh
+	$(RUNTEST) ./tests/uefi_krollback_test.sh
 	$(MAKE) os-coordinate-test
 	$(MAKE) os-coordinate-activate-test
 	$(MAKE) uefi-kinstall-test
 	$(MAKE) uefi-os-install-test
-	./tests/fb_vi_test.sh
+	$(RUNTEST) ./tests/fb_vi_test.sh
+	@$(RUNTEST) --print-summary
 
 smp-state-audit:
 	./tests/smp_state_audit_test.sh
@@ -2839,23 +2852,23 @@ qemu-virt-hardware-map-test: | $(BUILD)/.dir
 	FDT_TEST=$(BUILD)/fdt_test ./tests/qemu_virt_hardware_map_test.sh
 
 log-export-test: build $(QEMU_DTB) base-image
-	./tests/log_export_test.sh
+	$(RUNTEST) ./tests/log_export_test.sh
 
 smp-test: build base-image
-	./tests/smp_boot_test.sh
+	$(RUNTEST) ./tests/smp_boot_test.sh
 
 # QW3: orphan-zombie reaper acceptance. Boots the kernel and waits for the
 # in-kernel orphan-reap self-test's OK marker; runs at -smp 1 and -smp 4 because
 # reparent/reap is SMP-sensitive shared-table state.
 orphan-reap-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
-	SINGLE_DTB=$(QEMU_DTB) SMP_DTB=$(QEMU_DTB_SMP4) ./tests/orphan_reap_test.sh
+	SINGLE_DTB=$(QEMU_DTB) SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/orphan_reap_test.sh
 
 # QW2: blocking IPC park/wake acceptance. The receiver calls ipc_recv on an
 # empty endpoint and must park (not busy-spin) until ipc_send wakes it. The
 # EOF wake (last sender closes) is also tested. Runs at -smp 4 so a lost
 # cross-CPU wakeup causes the child to hang and the await to time out.
 qw2-blocking-ipc-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/qw2_blocking_ipc_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/qw2_blocking_ipc_test.sh
 
 # QW1: synchronous request/reply IPC over a transient kernel reply port
 # (ipc_call / ipc_reply_recv). A server child runs the one-syscall-per-request hot
@@ -2864,17 +2877,17 @@ qw2-blocking-ipc-test: build $(QEMU_DTB_SMP4) base-image
 # servers fail (EINVAL/EPIPE) instead of hanging. Runs at -smp 4 so a lost
 # cross-CPU wakeup (caller parked on a reply port) times out.
 ipc-call-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/ipc_call_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/ipc_call_test.sh
 
 # QW5: rights = held ∩ requested on IPC handle transfer. A parent moves a
 # /dev/zero handle (READ|WRITE|TRANSFER) over an endpoint requesting only
 # READ|TRANSFER; the child proves read still works, write is denied (WRITE was
 # attenuated away), and the parent's source fd was invalidated (move semantics).
 qw5-rights-intersection-test: build $(QEMU_DTB) base-image
-	./tests/qw5_rights_intersection_test.sh
+	$(RUNTEST) ./tests/qw5_rights_intersection_test.sh
 
 clock-test: build $(QEMU_DTB) base-image
-	./tests/clock_test.sh
+	$(RUNTEST) ./tests/clock_test.sh
 
 # H1: GICv3 driver — detect GICv2 vs v3 and drive the GICv3 redistributor +
 # ICC_* system-register CPU interface. Boots on `-M virt,gic-version=3` (the
@@ -2883,7 +2896,7 @@ clock-test: build $(QEMU_DTB) base-image
 # `virt` GICv2 profile is unchanged (the driver detects, it does not replace).
 # No base image needed — the markers are emitted during SMP bring-up.
 gicv3-test: build $(QEMU_DTB_GICV3)
-	./tests/gicv3_test.sh
+	$(RUNTEST) ./tests/gicv3_test.sh
 
 # H2: PCIe ECAM enumeration + virtio-PCI transport. Boots on `-M virt,gic-version=3`
 # with a virtio-rng attached over PCIe (the transport the Hetzner VM uses) and
@@ -2891,7 +2904,7 @@ gicv3-test: build $(QEMU_DTB_GICV3)
 # capabilities, and exchanges a virtqueue (entropy round trip). No base image
 # needed — the marker is emitted during early driver bring-up.
 virtio-pci-test: build $(QEMU_DTB_GICV3)
-	./tests/virtio_pci_test.sh
+	$(RUNTEST) ./tests/virtio_pci_test.sh
 
 # H3: boot to login from a RAM base image with NO block driver bound. Boots the
 # GPT disk under UEFI on the Hetzner profile (GICv3, boot disk on virtio-scsi-pci
@@ -2899,21 +2912,21 @@ virtio-pci-test: build $(QEMU_DTB_GICV3)
 # RAM and the kernel mounts the read-only base FS from RAM. Needs the full base
 # image, so it depends on `disk` (which builds base-image + the GPT).
 h3-ramdisk-test: disk
-	./tests/h3_ramdisk_test.sh
+	$(RUNTEST) ./tests/h3_ramdisk_test.sh
 
 # H4: a bounded SSH command succeeds end-to-end over virtio-net on the PCI
 # transport. Boots GICv3 with the NIC + RNG on PCIe (the Hetzner network/IRQ
 # model), the guest gets a DHCP lease over virtio-net-pci, autostarts /bin/sshd,
 # and a host OpenSSH client runs /bin/id over the network (QEMU hostfwd).
 h4-ssh-pci-test: build base-image $(SSHKEY)
-	./tests/h4_ssh_pci_test.sh
+	$(RUNTEST) ./tests/h4_ssh_pci_test.sh
 
 # H5: the kernel derives its platform map (GIC/ECAM/UART/CPU/PSCI) from ACPI with
 # no device tree. Boots the GPT disk under UEFI on the Hetzner device model (ACPI
 # firmware, GICv3, virtio-PCI); the loader forwards the RSDP and the kernel walks
 # RSDP->XSDT->MADT/MCFG/SPCR/FADT, then the whole stack comes up on those values.
 h5-acpi-test: disk
-	./tests/h5_acpi_test.sh
+	$(RUNTEST) ./tests/h5_acpi_test.sh
 
 # H7: /data (datafs) on virtio-blk-pci survives reboot on the Hetzner device
 # model. Boots the GPT disk under UEFI with virtio-scsi boot, GICv3, -smp 2,
@@ -2924,7 +2937,7 @@ hetzner-data-pci-test: build $(SSHKEY)
 	rm -f $(BASE_IMG) $(DISK_IMG)
 	$(MAKE) disk BASE_PROFILE=prod
 	chmod +x ./tests/hetzner_data_pci_test.sh
-	./tests/hetzner_data_pci_test.sh
+	$(RUNTEST) ./tests/hetzner_data_pci_test.sh
 	rm -f $(BASE_IMG) $(DISK_IMG)
 
 # H6: bare-metal cloud-deploy regression (Hetzner Cloud bring-up). Boots the
@@ -2937,7 +2950,7 @@ hetzner-data-pci-test: build $(SSHKEY)
 hetzner-deploy-test: build $(SSHKEY)
 	rm -f $(BASE_IMG) $(DISK_IMG)
 	$(MAKE) disk BASE_PROFILE=prod
-	./tests/hetzner_deploy_test.sh
+	$(RUNTEST) ./tests/hetzner_deploy_test.sh
 	rm -f $(BASE_IMG) $(DISK_IMG)   # restore: the prod base.img is deploy-specific, not the default
 
 # OS-1 Hetzner gate: prod GPT disk + SWOSBOOT store on virtio-blk-pci, headless SSH,
@@ -2949,7 +2962,7 @@ hetzner-os-update-test: build $(SSHKEY) updatestore $(TEST_BASE_IMG) $(TEST_OS_B
 	$(MAKE) disk BASE_PROFILE=prod INCLUDE_OS_STAGE_TEST=1 SWOS_SERVICES_FILE=fixtures/swos/services-supervised
 	$(MAKE) hetzner-update-store BASE_PROFILE=prod INCLUDE_OS_STAGE_TEST=1 SWOS_SERVICES_FILE=fixtures/swos/services-supervised
 	chmod +x ./tests/hetzner_os_update_test.sh
-	./tests/hetzner_os_update_test.sh
+	$(RUNTEST) ./tests/hetzner_os_update_test.sh
 	rm -f $(BASE_IMG) $(DISK_IMG) $(HETZNER_UPDATE_STORE_IMG)
 
 # P1.4: production hosting boot profile — supervised services, locked passwords.
@@ -2961,7 +2974,7 @@ prod-boot-test: build $(QEMU_DTB)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image BASE_PROFILE=prod
 	chmod +x ./tests/prod_boot_test.sh
-	./tests/prod_boot_test.sh
+	$(RUNTEST) ./tests/prod_boot_test.sh
 
 # P1.2: Hetzner deploy pipeline — build, local preflight, health, promote.
 hetzner-deploy-build: build $(SSHKEY)
@@ -2969,11 +2982,11 @@ hetzner-deploy-build: build $(SSHKEY)
 	./scripts/hetzner-deploy-build.sh
 
 hetzner-deploy-preflight: hetzner-deploy-build
-	./tests/hetzner_deploy_test.sh
+	$(RUNTEST) ./tests/hetzner_deploy_test.sh
 
 hetzner-deploy-pipeline-test: build $(SSHKEY)
 	chmod +x ./scripts/hetzner-deploy*.sh ./tests/hetzner_deploy_pipeline_test.sh
-	./tests/hetzner_deploy_pipeline_test.sh
+	$(RUNTEST) ./tests/hetzner_deploy_pipeline_test.sh
 
 hetzner-deploy-health:
 	chmod +x ./scripts/hetzner-deploy*.sh
@@ -2986,13 +2999,13 @@ hetzner-deploy-promote:
 # D0: persistent /data disk survives reboot. Base-image optional (the D0 marker
 # is emitted before vfsInit), so this focused gate runs without the full image.
 data-persist-test: build $(QEMU_DTB)
-	./tests/data_persist_test.sh
+	$(RUNTEST) ./tests/data_persist_test.sh
 
 # CR1: native Swift /bin/crond. Boots with the base image + a writable /data
 # disk, then drives a test crontab to prove @reboot fires once, @every fires
 # repeatedly, and jobs run via /bin/sh -c (durable append to /data).
 crond-test: build $(QEMU_DTB) base-image
-	./tests/crond_test.sh
+	$(RUNTEST) ./tests/crond_test.sh
 
 # OS-3b: streamed staging of a base image into the inactive A/B slot via the
 # capability-gated kernel syscalls (begin/write/commit), with monotonic
@@ -3000,14 +3013,14 @@ crond-test: build $(QEMU_DTB) base-image
 os-stage-test: build $(QEMU_DTB) updatestore $(TEST_BASE_IMG)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_OS_STAGE_TEST=1
-	./tests/os_stage_test.sh
+	$(RUNTEST) ./tests/os_stage_test.sh
 
 # OS-4: reflash-free OS update over HTTPS. swupdate fetches a signed SWSYS bundle
 # from a host TLS server (slirp 10.0.2.2), verifies it, and stages the base image
 # into the inactive slot + activates it; anti-rollback + bad-signature rejected.
 # Needs python3 + openssl (SKIPs without them). base-image carries os-root.pub.
 os-update-test: build $(QEMU_DTB) base-image updatestore $(SYSPACK) $(TEST_BASE_IMG) $(BUILD)/kernel-slot.bin
-	./tests/os_update_test.sh
+	$(RUNTEST) ./tests/os_update_test.sh
 
 # OS-5: health-confirm + anti-rollback floor bump. swupdate confirm marks the
 # booted slot healthy and raises the floor to its version; --auto gates on
@@ -3015,7 +3028,7 @@ os-update-test: build $(QEMU_DTB) base-image updatestore $(SYSPACK) $(TEST_BASE_
 os-confirm-test: build $(QEMU_DTB) updatestore $(TEST_BASE_IMG)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_OS_STAGE_TEST=1
-	./tests/os_confirm_test.sh
+	$(RUNTEST) ./tests/os_confirm_test.sh
 
 # OS-1: the single coordinated A/B selector — the only topology where BOTH A/B
 # mechanisms coexist (UEFI kernel A/B on the ESP + a SWOSBOOT store as the base
@@ -3023,7 +3036,7 @@ os-confirm-test: build $(QEMU_DTB) updatestore $(TEST_BASE_IMG)
 # kernel-state.lastBooted), so kernel + base never drift. Boots under AAVMF; SKIPs
 # without the firmware. Needs the ESP staging (uefi), base image, store + kernelboot.
 os-coordinate-test: build uefi base-image updatestore kernelboot
-	./tests/os_coordinate_test.sh
+	$(RUNTEST) ./tests/os_coordinate_test.sh
 
 # OS-1b: `swupdate os` flips the single ESP selector (kernel-state) so kernel +
 # base activate together. Boots a UEFI/ESP disk + SWOSBOOT store under AAVMF,
@@ -3032,7 +3045,7 @@ os-coordinate-test: build uefi base-image updatestore kernelboot
 os-coordinate-activate-test: build uefi updatestore $(TEST_BASE_IMG) $(TEST_OS_BUNDLE)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_OS_STAGE_TEST=1
-	./tests/os_coordinate_activate_test.sh
+	$(RUNTEST) ./tests/os_coordinate_activate_test.sh
 
 # OS-1c-2b: install a genuinely NEW kernel into the inactive ESP slot. Boots a
 # UEFI/ESP disk under AAVMF, corrupts slot B, then /bin/swos-kinstall streams a
@@ -3045,7 +3058,7 @@ os-coordinate-activate-test: build uefi updatestore $(TEST_BASE_IMG) $(TEST_OS_B
 uefi-kinstall-test: build uefi updatestore kernelboot $(KINSTALL_TEST_DEPS)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_OS_KINSTALL_TEST=1
-	./tests/uefi_kinstall_test.sh
+	$(RUNTEST) ./tests/uefi_kinstall_test.sh
 
 # OS-1c-3b: one SWSYS bundle moves kernel + base. Boots the coordinated topology
 # (UEFI kernel A/B on the ESP + a SWOSBOOT store) under AAVMF, reaches a shell, and
@@ -3058,85 +3071,85 @@ uefi-kinstall-test: build uefi updatestore kernelboot $(KINSTALL_TEST_DEPS)
 uefi-os-install-test: build uefi updatestore kernelboot $(KINSTALL_TEST_DEPS)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_OS_KINSTALL_TEST=1
-	./tests/uefi_os_install_test.sh
+	$(RUNTEST) ./tests/uefi_os_install_test.sh
 
 # Power control: /bin/reboot issues PSCI SYSTEM_RESET (machine resets), /bin/shutdown
 # issues PSCI SYSTEM_OFF (QEMU exits), and both are capConsole-gated. The reset path
 # is shared by the kernel panic auto-reboot. Needs the base image for the commands.
 reboot-test: build $(QEMU_DTB) base-image
-	./tests/reboot_test.sh
+	$(RUNTEST) ./tests/reboot_test.sh
 
 # D1: datafs files created via the VFS syscall path survive reboot. Needs the
 # base image (drives the busybox shell to create/read files under /data).
 datafs-test: build $(QEMU_DTB) base-image
-	./tests/datafs_test.sh
+	$(RUNTEST) ./tests/datafs_test.sh
 
 # D2: fsync/fdatasync/sync issue a real /data cache flush. Boots with a data disk
 # and confirms the durable-sync self-test. Base-image optional.
 datafs-fsync-test: build $(QEMU_DTB)
-	./tests/datafs_fsync_test.sh
+	$(RUNTEST) ./tests/datafs_fsync_test.sh
 
 # D3: a SQLite database stored on /data survives reboot (headline acceptance).
 # Needs the base image (which bakes in /bin/sqlite3).
 datafs-sqlite-test: build $(QEMU_DTB) base-image
-	./tests/datafs_sqlite_test.sh
+	$(RUNTEST) ./tests/datafs_sqlite_test.sh
 
 # V1: a second SWDATAFS disk mounts at /mnt/data1 as a distinct datafs volume,
 # isolated from /data, and both survive reboot. Boots with TWO data disks (the
 # test stamps them); the kernel mounts volume 0 = /data, volume 1 = /mnt/data1.
 v1-volume-test: build $(QEMU_DTB) base-image
-	./tests/v1_volume_test.sh
+	$(RUNTEST) ./tests/v1_volume_test.sh
 
 # V2a: a datafs volume carries a stable on-disk identity (128-bit UUID + label).
 # The second disk is provisioned with the label "media"; the kernel mounts it by
 # LABEL at /mnt/media (not by scan order) and the UUID is stable across reboot.
 v2-label-test: build $(QEMU_DTB) base-image
-	./tests/v2_label_test.sh
+	$(RUNTEST) ./tests/v2_label_test.sh
 
 # V2b: the declarative mount manifest /data/.system/mounts drives where labeled
 # volumes mount (by label), with the /mnt-only + empty-dir + no-format-non-magic
 # guardrails. Three boots: auto-mount, manifest remap, guardrail refusal.
 v2-manifest-test: build $(QEMU_DTB) base-image
-	./tests/v2_manifest_test.sh
+	$(RUNTEST) ./tests/v2_manifest_test.sh
 
 # V2c: the root /data volume is anchored by a UUID pinned in the kernel cmdline
 # (FDT /chosen/bootargs datafs.root=<hex>) — /data follows that disk regardless of
 # scan order; a blank disk is formatted as root stamping the pin on first boot.
 # Needs dtc to bake the cmdline UUID into a DTB.
 v2-anchor-test: build $(QEMU_DTB) base-image
-	./tests/v2_anchor_test.sh
+	$(RUNTEST) ./tests/v2_anchor_test.sh
 
 # V3a: runtime, capability-gated mount()/unmount(). Boots a labeled "media" disk
 # UNMOUNTED (no manifest, not auto-mounted because the root /data manifest lists
 # nothing for it), then drives /bin/mountprobe: mount it at /mnt/store, read/write
 # it, refuse a busy unmount (cwd inside) with EBUSY, then unmount once idle.
 v3-mount-test: build $(QEMU_DTB) base-image
-	./tests/v3_mount_test.sh
+	$(RUNTEST) ./tests/v3_mount_test.sh
 
 # V3b: a PERSIST runtime mount writes its entry through to /data/.system/mounts so
 # it re-mounts on reboot. 3 boots: seed a comment-only manifest, PERSIST-mount media
 # at /mnt/store (manifest gets `media /mnt/store`), then reboot and confirm media
 # re-mounts at /mnt/store with the file intact — no mountprobe on the last boot.
 v3-persist-test: build $(QEMU_DTB) base-image
-	./tests/v3_persist_test.sh
+	$(RUNTEST) ./tests/v3_persist_test.sh
 
 # V3c: mount()/unmount() are capConsole-gated. An unprivileged principal (caps
 # dropped via login) is denied with EACCES and creates nothing; a still-privileged
 # process mounts the same volume — proving the denial was purely the capability gate.
 v3-deny-test: build $(QEMU_DTB) base-image
-	./tests/v3_deny_test.sh
+	$(RUNTEST) ./tests/v3_deny_test.sh
 
 # V4b: a SWDATAFS data volume attached over virtio-blk-PCI (the Hetzner Cloud
 # Volume transport) is enumerated, mounted at /mnt, read/written, and survives
 # reboot — while /data stays on virtio-mmio. Proves the block driver drives both
 # transports (V4a) and the PCI scan finds the disk (V4b).
 v4-pci-test: build $(QEMU_DTB) base-image
-	./tests/v4_pci_test.sh
+	$(RUNTEST) ./tests/v4_pci_test.sh
 
 # W1: nginx runs and serves a static page over HTTP on SwiftOS. Needs the base
 # image (bakes /sbin/nginx + config) and host curl.
 nginx-test: build $(QEMU_DTB) base-image
-	./tests/nginx_test.sh
+	$(RUNTEST) ./tests/nginx_test.sh
 
 # NC1: boot the base image and run /bin/ncdemo — links static ncurses, resolves
 # terminfo from compiled-in fallbacks (no DB on disk), draws a box on the serial
@@ -3144,7 +3157,7 @@ nginx-test: build $(QEMU_DTB) base-image
 ncurses-test: build $(QEMU_DTB)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_NCURSES=1
-	./tests/ncurses_test.sh
+	$(RUNTEST) ./tests/ncurses_test.sh
 
 # GL1: boot the base image and run /bin/glibdemo — links static libglib-2.0.a
 # and exercises GString/GList/GHashTable/GArray/g_get_monotonic_time. Asserts
@@ -3152,24 +3165,24 @@ ncurses-test: build $(QEMU_DTB)
 glib-test: build $(QEMU_DTB)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_GLIB=1
-	./tests/glib_test.sh
+	$(RUNTEST) ./tests/glib_test.sh
 
 # MC1: boot the base image and run /bin/mc — the Midnight Commander TUI on the
 # ncurses backend. Asserts the panels/menu draw and that it quits cleanly.
 mc-test: build $(QEMU_DTB)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_NCURSES=1 INCLUDE_GLIB=1 INCLUDE_MC=1
-	./tests/mc_test.sh
+	$(RUNTEST) ./tests/mc_test.sh
 
 # W2: nginx serves a web root + logs from the persistent /data tier; content
 # survives reboot. Needs the base image and host curl.
 nginx-data-test: build $(QEMU_DTB) base-image
-	./tests/nginx_data_test.sh
+	$(RUNTEST) ./tests/nginx_data_test.sh
 
 # W3: nginx serves HTTPS/TLS (self-signed) — static openssl, /dev/urandom entropy,
 # TCP MSG_PEEK for TLS detection. Needs the base image and host curl.
 nginx-tls-test: build $(QEMU_DTB) base-image
-	./tests/nginx_tls_test.sh
+	$(RUNTEST) ./tests/nginx_tls_test.sh
 
 # M-A: reflash-free site updates, seed/recovery. swos-init runs `swupdate seed`
 # at boot: a fresh /data is seeded from the baked default (nginx then serves it
@@ -3177,30 +3190,30 @@ nginx-tls-test: build $(QEMU_DTB) base-image
 # the next boot — proving content lives on /data and survives reboot without a
 # base-image reflash. Needs the base image and host curl.
 site-seed-test: build $(QEMU_DTB) base-image
-	./tests/site_seed_test.sh
+	$(RUNTEST) ./tests/site_seed_test.sh
 
 # SU-B: signed-bundle apply. Forces a repack with INCLUDE_SITE_TEST=1 so the
 # signed test bundle (+ tampered copy) is baked under /usr/share/swupdate-test.
 site-bundle-test: build $(QEMU_DTB)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_SITE_TEST=1
-	./tests/site_bundle_test.sh
+	$(RUNTEST) ./tests/site_bundle_test.sh
 
 # SU-C: full operator path — `/bin/swupdate site <https-url>` over bounded-sshd
 # fetches a signed bundle from a host HTTPS server, verifies + atomically swaps
 # it, nginx serves the new content; survives reboot; tampered bundle rejected.
 # Uses the test bundles built by the SITE_TEST_* rules (served from the host).
 site-update-test: build $(QEMU_DTB) base-image $(SSHKEY) $(SITE_TEST_BUNDLE) $(SITE_TEST_BAD_BUNDLE)
-	./tests/site_update_test.sh
+	$(RUNTEST) ./tests/site_update_test.sh
 
 acme-mock-test: build $(QEMU_DTB) base-image
-	./tests/acme_mock_test.sh
+	$(RUNTEST) ./tests/acme_mock_test.sh
 
 acme-persist-test: build $(QEMU_DTB) base-image
-	./tests/acme_persist_test.sh
+	$(RUNTEST) ./tests/acme_persist_test.sh
 
 acme-verify-test: build $(QEMU_DTB) base-image
-	./tests/acme_verify_test.sh
+	$(RUNTEST) ./tests/acme_verify_test.sh
 
 tls-verify-test:
 	./tests/tls_verify_test.sh
@@ -3208,60 +3221,60 @@ tls-verify-test:
 # V-TS1: /bin/tlsget verifies by default against the system trust store
 # (/etc/ssl/cert.pem, shipped in the base image). Needs base-image + a NIC + host openssl.
 tls-truststore-test: build $(QEMU_DTB) base-image
-	./tests/tls_truststore_test.sh
+	$(RUNTEST) ./tests/tls_truststore_test.sh
 
 # SC2: on-device node-join + lease-expiry acceptance (case 8). Boots /bin/sctld +
 # /bin/slet under Embedded Swift in QEMU and asserts the join → register →
 # heartbeat → reaper-expiry → watch lifecycle markers on the serial console.
 sc2-join-test: build $(QEMU_DTB) base-image
-	./tests/sc2_join_test.sh
+	$(RUNTEST) ./tests/sc2_join_test.sh
 
 mprotect-test: build $(QEMU_DTB) base-image
-	./tests/mprotect_test.sh
+	$(RUNTEST) ./tests/mprotect_test.sh
 
 largemmap-test: build $(QEMU_DTB) base-image
-	./tests/largemmap_test.sh
+	$(RUNTEST) ./tests/largemmap_test.sh
 
 mmapreserve-test: build $(QEMU_DTB) base-image
-	./tests/mmapreserve_test.sh
+	$(RUNTEST) ./tests/mmapreserve_test.sh
 
 mapfixed-test: build $(QEMU_DTB) base-image
-	./tests/mapfixed_test.sh
+	$(RUNTEST) ./tests/mapfixed_test.sh
 
 pthread-test: build $(QEMU_DTB) base-image
-	./tests/pthread_test.sh
+	$(RUNTEST) ./tests/pthread_test.sh
 
 # TH8: direct-futex boundary probe (val-mismatch fast path, wake-empty, and the
 # 16-slot wait table full -> EAGAIN). Runs at -smp 4 so the slot-table races matter.
 futex-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/futex_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/futex_test.sh
 
 # Guard: malloc lock depth must not ride compiler/emulated TLS (busybox first-malloc).
 .PHONY: malloc-lock-tls-test
 malloc-lock-tls-test: build $(QEMU_DTB_SMP4) base-image $(BUILD)/n_compat_stubs.o
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/malloc_lock_tls_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/malloc_lock_tls_test.sh
 
 threadsync-test: build $(QEMU_DTB) base-image
-	./tests/threadsync_test.sh
+	$(RUNTEST) ./tests/threadsync_test.sh
 
 select-test: build $(QEMU_DTB) base-image
-	./tests/select_test.sh
+	$(RUNTEST) ./tests/select_test.sh
 
 eventfd-test: build $(QEMU_DTB) base-image
-	./tests/eventfd_test.sh
+	$(RUNTEST) ./tests/eventfd_test.sh
 
 # QW4: endpoint-badge acceptance. /bin/qw4-badge stamps a distinct badge into two
 # clients' send handles on otherwise-identical endpoints, sends on each, and
 # proves ipc_recv_badged reports the right badge per client — and 0 for an
 # unbadged send. No network needed.
 qw4-badge-test: build $(QEMU_DTB) base-image
-	./tests/qw4_badge_test.sh
+	$(RUNTEST) ./tests/qw4_badge_test.sh
 
 # I8 signed-base negative acceptance: tampered metadata + tampered payload +
 # (TH5) a valid signature by the WRONG key — all refused. base-image provides the
 # basepack tool + build/base-root the test re-signs with an attacker seed.
 signed-image-test: build $(QEMU_DTB) base-image
-	./tests/signed_image_test.sh
+	$(RUNTEST) ./tests/signed_image_test.sh
 
 # TH6 panic-loop guard: build a test-only kernel whose `#if PANIC_LOOP_INJECT`
 # hook faults on every boot, BEFORE the healthy-boot marker. The guard must bound
@@ -3273,170 +3286,170 @@ panic-loop-test: build $(QEMU_DTB) base-image
 	$(MAKE) $(PANIC_LOOP_KERNEL) \
 	  KERNEL_OBJ=$(BUILD)/kernel-paniclooptest.o KERNEL_ELF=$(PANIC_LOOP_KERNEL) \
 	  EXTRA_SWIFT_DEFS="-D PANIC_LOOP_INJECT"
-	PANIC_LOOP_KERNEL=$(PANIC_LOOP_KERNEL) ./tests/panic_loop_test.sh
+	PANIC_LOOP_KERNEL=$(PANIC_LOOP_KERNEL) $(RUNTEST) ./tests/panic_loop_test.sh
 
 pty-test: build $(QEMU_DTB) base-image
-	./tests/pty_test.sh
+	$(RUNTEST) ./tests/pty_test.sh
 
 ptysig-test: build $(QEMU_DTB) base-image
-	./tests/ptysig_test.sh
+	$(RUNTEST) ./tests/ptysig_test.sh
 
 epoll-test: build $(QEMU_DTB) base-image
-	./tests/epoll_test.sh
+	$(RUNTEST) ./tests/epoll_test.sh
 
 uvwake-test: build $(QEMU_DTB) base-image
-	./tests/uvwake_test.sh
+	$(RUNTEST) ./tests/uvwake_test.sh
 
 uvsem-test: build $(QEMU_DTB) base-image
-	./tests/uvsem_test.sh
+	$(RUNTEST) ./tests/uvsem_test.sh
 
 uvrwlock-test: build $(QEMU_DTB) base-image
-	./tests/uvrwlock_test.sh
+	$(RUNTEST) ./tests/uvrwlock_test.sh
 
 uvmutex-test: build $(QEMU_DTB) base-image
-	./tests/uvmutex_test.sh
+	$(RUNTEST) ./tests/uvmutex_test.sh
 
 uvthreadname-test: build $(QEMU_DTB) base-image
-	./tests/uvthreadname_test.sh
+	$(RUNTEST) ./tests/uvthreadname_test.sh
 
 uvthreadstack-test: build $(QEMU_DTB) base-image
-	./tests/uvthreadstack_test.sh
+	$(RUNTEST) ./tests/uvthreadstack_test.sh
 
 uvkeyonce-test: build $(QEMU_DTB) base-image
-	./tests/uvkeyonce_test.sh
+	$(RUNTEST) ./tests/uvkeyonce_test.sh
 
 uvenv-test: build $(QEMU_DTB) base-image
-	./tests/uvenv_test.sh
+	$(RUNTEST) ./tests/uvenv_test.sh
 
 uvbarrier-test: build $(QEMU_DTB) base-image
-	./tests/uvbarrier_test.sh
+	$(RUNTEST) ./tests/uvbarrier_test.sh
 
 uvcond-test: build $(QEMU_DTB) base-image
-	./tests/uvcond_test.sh
+	$(RUNTEST) ./tests/uvcond_test.sh
 
 uvsocketpair-test: build $(QEMU_DTB) base-image
-	./tests/uvsocketpair_test.sh
+	$(RUNTEST) ./tests/uvsocketpair_test.sh
 
 uvsignal-test: build $(QEMU_DTB) base-image
-	./tests/uvsignal_test.sh
+	$(RUNTEST) ./tests/uvsignal_test.sh
 
 uvatfork-test: build $(QEMU_DTB) base-image
-	./tests/uvatfork_test.sh
+	$(RUNTEST) ./tests/uvatfork_test.sh
 
 uvspawn-test: build $(QEMU_DTB) base-image
-	./tests/uvspawn_test.sh
+	$(RUNTEST) ./tests/uvspawn_test.sh
 
 signal-test: build $(QEMU_DTB) base-image
-	./tests/signal_test.sh
+	$(RUNTEST) ./tests/signal_test.sh
 
 socket-test: build $(QEMU_DTB) base-image
-	./tests/socket_test.sh
+	$(RUNTEST) ./tests/socket_test.sh
 
 # USB M1: xHCI controller bring-up over PCIe + USB-keyboard detection. Runs
 # early in boot (before any disk use), so it needs only the kernel + dtb.
 usb-xhci-test: build $(QEMU_DTB)
-	./tests/usb_xhci_test.sh
+	$(RUNTEST) ./tests/usb_xhci_test.sh
 
 smp-resource-stress-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_resource_stress_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_resource_stress_test.sh
 
 smp-headroom-test: build base-image
 	./tests/smp_headroom_test.sh
 
 smp-uefi-test: disk base-image
-	SMP_CPUS=4 UEFI_BOOT=disk ./tests/uefi_boot_test.sh
+	SMP_CPUS=4 UEFI_BOOT=disk $(RUNTEST) ./tests/uefi_boot_test.sh
 
 s4-resource-stress-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/s4_resource_stress_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/s4_resource_stress_test.sh
 
 # Fixed-size kernel-pool saturation: every bounded pool must refuse gracefully
 # at its ceiling (clean errno, no panic) and recover afterwards (no slot leak).
 # Single-core by default (cap logic is not SMP-specific); the SMP variant also
 # stresses the S4 pool locks while secondaries tick.
 saturation-test: build $(QEMU_DTB) base-image
-	SMP_CPUS=1 SMP_DTB=$(QEMU_DTB) ./tests/saturation_test.sh
+	SMP_CPUS=1 SMP_DTB=$(QEMU_DTB) $(RUNTEST) ./tests/saturation_test.sh
 
 saturation-smp-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/saturation_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/saturation_test.sh
 
 # PT1 follow-up: prove IPC endpoint pool capacity is above the historic 16.
 max-endpoints-test: build $(QEMU_DTB) base-image
-	./tests/max_endpoints_test.sh
+	$(RUNTEST) ./tests/max_endpoints_test.sh
 
 # net-d follow-up: /bin/tcpget resolves a hostname then connects.
 tcpget-by-name-test: build $(QEMU_DTB) base-image
-	./tests/tcpget_by_name_test.sh
+	$(RUNTEST) ./tests/tcpget_by_name_test.sh
 
 # net-e follow-up: HTTP/1.0 keep-alive — two sequential requests on one socket.
 httpd-keepalive-test: build $(QEMU_DTB) base-image
-	./tests/httpd_keepalive_test.sh
+	$(RUNTEST) ./tests/httpd_keepalive_test.sh
 
 # Concurrent cross-CPU resource-churn race: N+2 copies of /bin/smprace run in
 # parallel on different CPUs (via the S5f run-any primitive) and hammer the
 # S4-locked pools at once. Validates the locks under genuine multi-CPU
 # contention - frame-leak-free and balanced - which a CPU0-only stress cannot.
 smp-race-stress-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_race_stress_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_race_stress_test.sh
 
 # Coarse memory edge cases: sparse page-table pressure (touch per 2 MiB then
 # unmap) + graceful refusal of an absurd reservation, and COW fork lifecycle.
 # Asserts graceful behaviour + leak balance (free frames return to baseline).
 edge-stress-test: build $(QEMU_DTB) base-image
-	SMP_CPUS=1 SMP_DTB=$(QEMU_DTB) ./tests/edge_stress_test.sh
+	SMP_CPUS=1 SMP_DTB=$(QEMU_DTB) $(RUNTEST) ./tests/edge_stress_test.sh
 
 # EL0 stack-overflow fault report: kernel walks the user FP chain, collapses
 # consecutive identical LRs, terminates the process with SIGSEGV, and stays up.
 el0-fault-backtrace-test: build $(QEMU_DTB) base-image
-	./tests/el0_fault_backtrace_test.sh
+	$(RUNTEST) ./tests/el0_fault_backtrace_test.sh
 
 # Network overload + recovery: drive /bin/httpd past maxConns from the host over
 # slirp (20-way burst + a slow reader), asserting graceful degradation and that
 # the server recovers (200) afterwards. The netsvc kill+restart-under-traffic
 # recovery angle is covered by ns3-net-service-test.
 httpd-load-test: build $(QEMU_DTB) base-image
-	./tests/httpd_load_test.sh
+	$(RUNTEST) ./tests/httpd_load_test.sh
 
 smp-cpu-utilization-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/top_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/top_test.sh
 
 s5-scheduler-placement-test: build $(QEMU_DTB_SMP4) base-image
-	TIMEOUT=180 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
+	TIMEOUT=180 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_boot_test.sh
 
 s5-placement-stress-test: build $(QEMU_DTB_SMP4) base-image
-	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
+	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_boot_test.sh
 
 s5-el0-fanout-test: build $(QEMU_DTB_SMP4) base-image
-	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
+	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_boot_test.sh
 
 s5-thread-fanout-test: build $(QEMU_DTB_SMP4) base-image
-	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
+	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_boot_test.sh
 
 s5-run-any-placement-test: build $(QEMU_DTB_SMP4) base-image
-	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
+	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_boot_test.sh
 
 # S5g: permanent default multi-CPU EL0 (run-any placement for ordinary userland).
 s5-ungate-test: build $(QEMU_DTB_SMP4) base-image
-	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/smp_boot_test.sh
+	TIMEOUT=240 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/smp_boot_test.sh
 
 s5-test: smp-cpu-utilization-test s5-scheduler-placement-test s5-placement-stress-test s5-el0-fanout-test s5-thread-fanout-test s5-run-any-placement-test s5-ungate-test
 
 c5-driver-service-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/driver_service_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/driver_service_test.sh
 
 # LA1: persistent Swift supervisor + UserlandService over the name-registry grant,
 # under -smp 4 with the virtio-input device present (like c5-device-metadata-test).
 la1-service-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/userland_service_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/userland_service_test.sh
 
 c5-device-handle-test: c5-driver-service-test
 
 c5-device-discovery-test: c5-driver-service-test
 
 c5-device-metadata-test: build $(QEMU_DTB_SMP4) base-image
-	C5_INPUT_DEVICE=1 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/driver_service_test.sh
+	C5_INPUT_DEVICE=1 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/driver_service_test.sh
 
 c5-device-authority-test: build $(QEMU_DTB_SMP4) base-image
-	C5_AUTHORITY_TEST=1 C5_INPUT_DEVICE=1 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/driver_service_test.sh
+	C5_AUTHORITY_TEST=1 C5_INPUT_DEVICE=1 SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/driver_service_test.sh
 
 c5-device-rights-test: $(BUILD)/.dir
 	$(HOST_SWIFTC) tests/handle_test.swift kernel/vfs/handle.swift -o $(BUILD)/handle_test
@@ -3444,7 +3457,7 @@ c5-device-rights-test: $(BUILD)/.dir
 	./tests/device_authority_guard_test.sh
 
 device-authority-cap-test: build $(QEMU_DTB) base-image
-	./tests/device_authority_cap_test.sh
+	$(RUNTEST) ./tests/device_authority_cap_test.sh
 
 c5-test: c5-driver-service-test c5-device-handle-test c5-device-discovery-test c5-device-metadata-test c5-device-authority-test c5-device-rights-test device-authority-cap-test
 
@@ -3452,47 +3465,47 @@ c5-test: c5-driver-service-test c5-device-handle-test c5-device-discovery-test c
 # present and asserts the capConsole probe maps it and reads its registers, plus
 # the EACCES refusals. Runs single-core and under -smp 4.
 device-mmio-map-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
-	./tests/device_mmio_map_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/device_mmio_map_test.sh
+	$(RUNTEST) ./tests/device_mmio_map_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/device_mmio_map_test.sh
 
 # C5h: real MMIO authority reaches the supervised userland driver service. The LA1
 # supervisor claims the now-mappable virtio-input.0 grant and transfers it over IPC
 # to /bin/svc-input, which sys_device_mmap's the window and verifies the virtio magic
 # through the userland mapping. Runs under -smp 4 with the virtio-input device.
 c5-mmio-grant-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c5_mmio_grant_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/c5_mmio_grant_test.sh
 
 # C5i: the virtio-input driver runs entirely in userland. The kernel skips its
 # in-kernel polled driver; /bin/svc-input maps the MMIO window, resolves the
 # virtqueue's physical address via virt_to_phys, brings the queue up, and recovers
 # across a supervisor-driven kill+restart. Runs under -smp 4.
 c5-userland-driver-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c5_userland_driver_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/c5_userland_driver_test.sh
 
 # NS1: virtio-net MMIO grant reaches userland alongside the live in-kernel net
 # stack. Boots with a virtio-net (slirp) device; the capConsole probe maps the NIC
 # window, reads the identity + config MAC, and the kernel net stack stays up
 # (ICMP echo reply). Runs under -smp 4.
 ns1-net-grant-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/ns1_net_grant_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/ns1_net_grant_test.sh
 
 # NS2: a userland virtio-net driver does real TX/RX on a SECONDARY NIC (two
 # virtio-net devices; the kernel keeps the first) via an ARP round-trip against
 # slirp, without disturbing the primary kernel NIC. Runs under -smp 4.
 ns2-net-driver-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/ns2_net_driver_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/ns2_net_driver_test.sh
 
 # NS3: a restartable userland net service relays frames over an shmring data plane,
 # driving a secondary NIC from EL0; kill+restart recovery across two generations.
 ns3-net-service-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/ns3_net_service_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/ns3_net_service_test.sh
 
 # C5j: the persistent userland driver (/bin/inputd, launched by swos-init) injects
 # decoded virtio-input keystrokes into the kernel tty (SYS_tty_inject), restoring
 # interactive keyboard. The test QMP send-key's a character into the virtio device
 # and asserts it reaches the login prompt via the userland driver. Runs under -smp 4.
 c5-tty-inject-test: build $(QEMU_DTB_SMP4) base-image
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c5_tty_inject_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/c5_tty_inject_test.sh
 
 # Process-table growth. The boot probe (/bin/procmaxprobe) forks more than the
 # old 64-slot table's worth of children in globalCell, keeps them parked on a
@@ -3500,138 +3513,138 @@ c5-tty-inject-test: build $(QEMU_DTB_SMP4) base-image
 # no longer the runtime boundary and that grow-and-reap leaks no slot. Runs
 # single-core and under -smp 4.
 procmax-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
-	./tests/procmax_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/procmax_test.sh
+	$(RUNTEST) ./tests/procmax_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/procmax_test.sh
 
 # C6a: per-cell resource accounting. The boot probe (/bin/cellstatprobe) forks
 # children in globalCell, reads SYS_cell_stat, and asserts the aggregate
 # {processes, residentPages, handles} grows with the live children and that a
 # reaped process's charge is reclaimed. Runs single-core and under -smp 4.
 c6-cell-accounting-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
-	./tests/c6_cell_accounting_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c6_cell_accounting_test.sh
+	$(RUNTEST) ./tests/c6_cell_accounting_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/c6_cell_accounting_test.sh
 
 # C6b: cell creation + spawn-into-cell. The boot probe (/bin/cellcreateprobe)
 # creates a cell, refuses a spawn without the cell handle, launches /bin/cellchild
 # into the cell, and asserts the child is charged to the new cell (not globalCell)
 # and reclaimed on reap. Runs single-core and under -smp 4.
 c6-cell-create-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
-	./tests/c6_cell_create_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c6_cell_create_test.sh
+	$(RUNTEST) ./tests/c6_cell_create_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/c6_cell_create_test.sh
 
 # C6c: per-cell namespace root. The boot probe (/bin/cellnsprobe) creates a cell
 # rooted at /www and launches /bin/cellnschild into it; the child must resolve a
 # file inside the root but be refused /etc and the global root, while the default
 # cell stays unconfined. Runs single-core and under -smp 4.
 c6-cell-namespace-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
-	./tests/c6_cell_namespace_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c6_cell_namespace_test.sh
+	$(RUNTEST) ./tests/c6_cell_namespace_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/c6_cell_namespace_test.sh
 
 # C6d: cell lifecycle — resident-page cap, enumerate-by-cell, and teardown. The boot
 # probe (/bin/cellcapprobe) caps a cell, spawns members until the cap refuses, walks
 # the members via cell_pids, proves destroy is refused while live, then reaps + frees
 # the CellId and reuses it. Runs single-core and under -smp 4.
 c6-cell-lifecycle-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
-	./tests/c6_cell_lifecycle_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c6_cell_lifecycle_test.sh
+	$(RUNTEST) ./tests/c6_cell_lifecycle_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/c6_cell_lifecycle_test.sh
 
 # C6e: end-to-end one-service-per-cell. The boot probe (/bin/cellsvcprobe) assembles
 # a cell { /www root + restricted handles + page cap }, launches /bin/cellhello
 # inside it, drives a ping/pong round-trip, confirms isolation + accounting, then
 # tears it down. Runs single-core and under -smp 4.
 c6-cell-service-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
-	./tests/c6_cell_service_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c6_cell_service_test.sh
+	$(RUNTEST) ./tests/c6_cell_service_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/c6_cell_service_test.sh
 
 # C7a: intra-member resident-page cap. The boot probe (/bin/cellgrowprobe) launches
 # /bin/cellgrower into a capped cell; the grower cannot grow its own heap (sbrk/mmap)
 # past the cap (the aggregate never exceeds it), while an uncapped global member is
 # unaffected. Runs single-core and under -smp 4.
 c7-cell-pagecap-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
-	./tests/c7_cell_pagecap_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c7_cell_pagecap_test.sh
+	$(RUNTEST) ./tests/c7_cell_pagecap_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/c7_cell_pagecap_test.sh
 
 # C7b: per-cell handle cap (folded into cell_create). The boot probe
 # (/bin/cellhandleprobe) launches /bin/cellopener into a handle-capped cell; the opener
 # cannot open() fds past the cap (refused EMFILE, aggregate never exceeds it), while an
 # uncapped global member is unaffected. Runs single-core and under -smp 4.
 c7-cell-handlecap-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
-	./tests/c7_cell_handlecap_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c7_cell_handlecap_test.sh
+	$(RUNTEST) ./tests/c7_cell_handlecap_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/c7_cell_handlecap_test.sh
 
 # C7c: persistent restart/FDIR cell supervisor. The boot probe (/bin/cell-supervisor)
 # hosts /bin/cell-svc in a cell, detects its exit/crash, restarts it in a FRESH cell
 # (new CellId) with accounting reclaimed across generations, and bounds restarts so a
 # crash loop halts instead of fork-storming. Runs single-core and under -smp 4.
 c7-cell-supervisor-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
-	./tests/c7_cell_supervisor_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c7_cell_supervisor_test.sh
+	$(RUNTEST) ./tests/c7_cell_supervisor_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/c7_cell_supervisor_test.sh
 
 # C7d: a REAL in-tree service (/bin/kv) lifted into a supervised cell. The boot probe
 # (/bin/cell-kv-supervisor) runs the real key-value store inside a cell with a restricted
 # handle set + caps, drives a live SET/GET round-trip over pipes, faults + restarts it in
 # a fresh cell (fresh state), and tears down cleanly. Runs single-core and under -smp 4.
 c7-cell-realservice-test: build $(QEMU_DTB) $(QEMU_DTB_SMP4) base-image
-	./tests/c7_cell_realservice_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/c7_cell_realservice_test.sh
+	$(RUNTEST) ./tests/c7_cell_realservice_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/c7_cell_realservice_test.sh
 
 ssh-transport-test: build $(QEMU_DTB) base-image
-	./tests/ssh_transport_test.sh
+	$(RUNTEST) ./tests/ssh_transport_test.sh
 
 ssh-runtime-entropy-test: build $(QEMU_DTB) base-image
-	./tests/ssh_runtime_entropy_test.sh
+	$(RUNTEST) ./tests/ssh_runtime_entropy_test.sh
 
 sshd-transport-test: build $(QEMU_DTB) base-image $(SSHKEY)
-	./tests/sshd_transport_test.sh
+	$(RUNTEST) ./tests/sshd_transport_test.sh
 
 sshd-usr-bin-exec-test: build $(QEMU_DTB) base-image package-fixture $(SSHKEY)
-	./tests/sshd_usr_bin_exec_test.sh
+	$(RUNTEST) ./tests/sshd_usr_bin_exec_test.sh
 
 sshd-sftp-test: build $(QEMU_DTB) base-image $(SSHKEY)
-	./tests/sshd_sftp_test.sh
+	$(RUNTEST) ./tests/sshd_sftp_test.sh
 
 sshd-sftp-write-test: build $(QEMU_DTB) base-image $(SSHKEY)
-	./tests/sshd_sftp_write_test.sh
+	$(RUNTEST) ./tests/sshd_sftp_write_test.sh
 
 sshd-interactive-test: build $(QEMU_DTB) base-image $(SSHKEY)
-	./tests/sshd_interactive_test.sh
+	$(RUNTEST) ./tests/sshd_interactive_test.sh
 
 sshd-host-key-rotation-test: build $(QEMU_DTB) $(SSHKEY)
-	./tests/sshd_host_key_rotation_test.sh
+	$(RUNTEST) ./tests/sshd_host_key_rotation_test.sh
 
 sshd-kex-seed-test: build $(QEMU_DTB) $(SSHKEY)
-	./tests/sshd_kex_seed_test.sh
+	$(RUNTEST) ./tests/sshd_kex_seed_test.sh
 
 sshd-authorized-keys-test: build $(QEMU_DTB) $(SSHKEY)
-	./tests/sshd_authorized_keys_test.sh
+	$(RUNTEST) ./tests/sshd_authorized_keys_test.sh
 
 sshd-supervision-test: build $(QEMU_DTB) $(SSHKEY)
-	./tests/sshd_supervision_test.sh
+	$(RUNTEST) ./tests/sshd_supervision_test.sh
 
 # Rate-based swos-init restart policy: quick deaths are capped; console stays usable.
 init-restart-rate-test: build $(QEMU_DTB)
-	./tests/init_restart_rate_test.sh
+	$(RUNTEST) ./tests/init_restart_rate_test.sh
 
 sshd-ipv6-listener-test: build $(QEMU_DTB) $(SSHKEY)
-	./tests/sshd_ipv6_listener_test.sh
+	$(RUNTEST) ./tests/sshd_ipv6_listener_test.sh
 
 sshd-ipv6-supervision-test: build $(QEMU_DTB) $(SSHKEY)
-	./tests/sshd_ipv6_supervision_test.sh
+	$(RUNTEST) ./tests/sshd_ipv6_supervision_test.sh
 
 sshd-runtime-entropy-test: build $(QEMU_DTB) base-image $(SSHKEY)
-	./tests/sshd_runtime_entropy_test.sh
+	$(RUNTEST) ./tests/sshd_runtime_entropy_test.sh
 
 sshd-deploy-preflight-test: build $(QEMU_DTB) $(SSHKEY)
-	./tests/sshd_deploy_preflight_test.sh
+	$(RUNTEST) ./tests/sshd_deploy_preflight_test.sh
 
 hetzner-deploy-bundle-test: build $(QEMU_DTB) $(SSHKEY)
-	./tests/hetzner_deploy_bundle_test.sh
+	$(RUNTEST) ./tests/hetzner_deploy_bundle_test.sh
 
 netinfo-test: build $(QEMU_DTB) base-image
-	./tests/netinfo_test.sh
+	$(RUNTEST) ./tests/netinfo_test.sh
 
 net-static-ipv6-test: build $(QEMU_DTB)
-	./tests/net_static_ipv6_test.sh
+	$(RUNTEST) ./tests/net_static_ipv6_test.sh
 
 s0-test: smp-state-audit smp-mailbox-layout smp-s1-preflight smp-test smp-headroom-test smp-uefi-test
 s0c-test: smp-state-audit
@@ -3876,7 +3889,7 @@ model-gguf-image: $(MODEL_GGUF_PACK_IMG)
 
 # LM5d acceptance: serve the TinyLlama Q4_K_M GGUF end to end from the model disk.
 llm-serve-gguf-test: build $(QEMU_DTB_2048) base-image $(MODEL_GGUF_PACK_IMG)
-	DTB=$(QEMU_DTB_2048) ./tests/llm_serve_gguf_test.sh
+	DTB=$(QEMU_DTB_2048) $(RUNTEST) ./tests/llm_serve_gguf_test.sh
 
 # LM4b host acceptance: the TinyLlama model image builds + is a valid signed
 # packed FS carrying the bundle + the provenance sentinel.
@@ -3886,17 +3899,17 @@ model-tinyllama-image-test: $(MODEL_TL_PACK_IMG)
 # LM3b acceptance: boot with the model disk attached and prove the kernel mounts
 # it read-only at /srv/models (sentinel readable, bundle visible).
 model-mount-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
-	./tests/model_mount_test.sh
+	$(RUNTEST) ./tests/model_mount_test.sh
 
 # LM3c acceptance: /bin/llmd serves the disk-delivered model from /srv/models
 # under a larger-RAM inference profile (model disk attached, -m 1024M).
 # LM2: multi-thread matmul under -smp 4 (S5g places workers across CPUs).
 llm-smp-test: build $(QEMU_DTB_SMP4) base-image model
 	chmod +x tests/llm_smp_test.sh
-	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) ./tests/llm_smp_test.sh
+	SMP_CPUS=4 SMP_DTB=$(QEMU_DTB_SMP4) $(RUNTEST) ./tests/llm_smp_test.sh
 
 llm-serve-disk-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
-	./tests/llm_serve_disk_test.sh
+	$(RUNTEST) ./tests/llm_serve_disk_test.sh
 
 # LM4c acceptance: serve the REAL TinyLlama-1.1B model end to end off the model
 # disk (-m 2048M; the kernel high-RAM enabler makes RAM past the 1 GiB linear-map
@@ -3904,12 +3917,12 @@ llm-serve-disk-test: build $(QEMU_DTB) base-image $(MODEL_PACK_IMG)
 # single-core TCG) and depends on `make tinyllama`, so it is a standalone target,
 # never part of `make test`.
 llm-serve-tinyllama-test: build $(QEMU_DTB_2048) base-image $(MODEL_TL_PACK_IMG)
-	DTB=$(QEMU_DTB_2048) ./tests/llm_serve_tinyllama_test.sh
+	DTB=$(QEMU_DTB_2048) $(RUNTEST) ./tests/llm_serve_tinyllama_test.sh
 
 # LM6b acceptance: POST /chat (chat template + sampling) served e2e over the Q8
 # TinyLlama disk (faster per token than GGUF). Standalone, not in `make test`.
 llm-chat-test: build $(QEMU_DTB_2048) base-image $(MODEL_TL_PACK_IMG)
-	DTB=$(QEMU_DTB_2048) ./tests/llm_chat_test.sh
+	DTB=$(QEMU_DTB_2048) $(RUNTEST) ./tests/llm_chat_test.sh
 
 # OS-1b/OS-1c-3: a signed SWSYS v2 bundle (the real padded kernel slot + a v4
 # SWOSKERN manifest over it, plus the tiny test base, version 2) for the no-network
@@ -4163,10 +4176,10 @@ package-repo-fixture: $(PKGREPO_ROOT) $(PKGREPO_PUB)
 	$(PKGREPO) inspect $(PKGREPO_ROOT)/aarch64/current/catalog.signed
 
 package-overlay-test: build $(QEMU_DTB) base-image package-fixture
-	./tests/package_overlay_test.sh
+	$(RUNTEST) ./tests/package_overlay_test.sh
 
 package-store-test: build $(QEMU_DTB) base-image package-store-fixture
-	./tests/pkg_store_boot_test.sh
+	$(RUNTEST) ./tests/pkg_store_boot_test.sh
 
 package-local-install-fixture: $(PKG_EMPTY_STORE_IMG)
 	cp $(PKG_EMPTY_STORE_IMG) $(PKG_INSTALL_STORE_IMG)
@@ -4177,34 +4190,34 @@ package-lua-install-fixture: $(PKGSTORE)
 	$(PKGSTORE) inspect $(PKG_LUA_INSTALL_STORE_IMG)
 
 package-local-install-test: build $(QEMU_DTB) base-image package-local-install-fixture
-	./tests/pkg_local_install_test.sh
+	$(RUNTEST) ./tests/pkg_local_install_test.sh
 
 package-remove-test: build $(QEMU_DTB) base-image package-fixture $(PKG_EMPTY_STORE_IMG)
-	./tests/pkg_remove_test.sh
+	$(RUNTEST) ./tests/pkg_remove_test.sh
 
 package-repo-install-test: build $(QEMU_DTB) base-image package-local-install-fixture package-repo-fixture
-	./tests/pkg_repo_install_test.sh
+	$(RUNTEST) ./tests/pkg_repo_install_test.sh
 
 package-lua-repo-install-test: build $(QEMU_DTB) base-image package-lua-install-fixture ports-lua-repo-fixture
-	./tests/pkg_lua_repo_install_test.sh
+	$(RUNTEST) ./tests/pkg_lua_repo_install_test.sh
 
 package-ports-seed-repo-install-test: build $(QEMU_DTB) package-lua-install-fixture ports-seed-repo-fixture
-	./tests/pkg_ports_seed_repo_install_test.sh
+	$(RUNTEST) ./tests/pkg_ports_seed_repo_install_test.sh
 
 # R1: install the rsync port from a signed repo over the network and run
 # `rsync --version` in QEMU. Builds rsync.swpkg + a one-package trusted repo.
 rsync-test: build busybox $(QEMU_DTB) package-lua-install-fixture ports-rsync-repo-fixture
-	./tests/rsync_test.sh
+	$(RUNTEST) ./tests/rsync_test.sh
 
 package-static-host-repo-install-test: build $(QEMU_DTB) package-lua-install-fixture ports-static-host-publish
-	./tests/pkg_static_host_repo_install_test.sh
+	$(RUNTEST) ./tests/pkg_static_host_repo_install_test.sh
 
 package-static-host-dns-repo-install-test: build $(QEMU_DTB) package-lua-install-fixture ports-static-host-publish
-	./tests/pkg_static_host_dns_repo_install_test.sh
+	$(RUNTEST) ./tests/pkg_static_host_dns_repo_install_test.sh
 
 package-hosted-url-install-test: build $(QEMU_DTB) package-lua-install-fixture
 	@if [ -z "$(PKG_HOSTED_REPO_URL)" ]; then echo "Set PKG_HOSTED_REPO_URL=http://host/aarch64/current" >&2; exit 2; fi
-	PKG_HOSTED_REPO_URL="$(PKG_HOSTED_REPO_URL)" ./tests/pkg_hosted_url_install_test.sh
+	PKG_HOSTED_REPO_URL="$(PKG_HOSTED_REPO_URL)" $(RUNTEST) ./tests/pkg_hosted_url_install_test.sh
 
 # U1a: host builder for the SWOSBOOT A/B update-store disk. Shares the manifest
 # format/CRC with the kernel via kernel/fs/swosboot.swift.
@@ -4502,7 +4515,7 @@ bash:
 bash-test: build $(QEMU_DTB)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_BASH=1
-	./tests/bash_test.sh
+	$(RUNTEST) ./tests/bash_test.sh
 
 # bash.elf is produced by `make bash` (needs newlib + ncurses + network).
 # Must run before `make base-image`.
@@ -4518,7 +4531,7 @@ zsh:
 zsh-test: build $(QEMU_DTB)
 	rm -f $(BASE_IMG)
 	$(MAKE) base-image INCLUDE_ZSH=1
-	./tests/zsh_test.sh
+	$(RUNTEST) ./tests/zsh_test.sh
 
 # zsh.elf is produced by `make zsh` (needs newlib + ncurses + network).
 # Must run before `make base-image`.
