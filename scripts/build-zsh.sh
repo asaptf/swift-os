@@ -154,5 +154,10 @@ undefined="$("$NM" -u "$SRC/Src/zsh" 2>/dev/null)"
 "$READELF" -h "$SRC/Src/zsh" | grep -q 'Machine:[[:space:]]*AArch64' || fail "zsh is not an AArch64 ELF"
 "$STRIP" "$SRC/Src/zsh" -o "$ROOT/build/zsh.elf"
 
+# Content stamp so Makefile / CI refuse a binary whose tree-owned runtime
+# inputs moved (mtimes alone are unreliable after Actions cache restore).
+"$ROOT/scripts/artifact-inputs-hash.sh" zsh >"$ROOT/build/zsh.inputs-hash"
+
 echo "Built $ROOT/build/zsh.elf (zsh ${VERSION}, --disable-dynamic --disable-multibyte, ZLE + ncurses)"
+echo "inputs-hash $(cat "$ROOT/build/zsh.inputs-hash")"
 "$READELF" -h "$ROOT/build/zsh.elf" | grep -E 'Type:|Entry|Size'

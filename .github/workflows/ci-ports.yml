@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Weekly heavy-ports gate: ncurses, GLib, Midnight Commander, bash, zsh.
+# These embed the freestanding runtime shim and are secondary to the product
+# profile (application & AI hosting), so they are not on the daily `make test`
+# / nightly critical path. Own cache (not the bootstrap cache) so a shim change
+# does not drag GLib/MC cross-builds into every nightly miss.
+
+name: ci · ports
+
+on:
+  schedule:
+    # Weekly, Sunday 04:00 UTC — off the nightly (03:00 daily) window.
+    - cron: '0 4 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ports-test:
+    name: make ports-test
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache toolchains and bootstrap inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.swift/toolchains
+            ~/.local/arm-gnu-toolchain
+            ~/.local/bin
+            sysroot
+            models
+            build/busybox.elf
+            build/busybox.inputs-hash
+            build/zlib-root
+            build/swport-distfiles
+          key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/artifact-inputs-hash.sh', 'scripts/busybox-inputs-hash.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**') }}
+          restore-keys: |
+            bootstrap-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Cache heavy port build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ncdemo.elf
+            build/ncurses.inputs-hash
+            build/glibdemo.elf
+            build/glib.inputs-hash
+            build/mc.elf
+            build/mc-skins
+            build/mc.inputs-hash
+            build/bash.elf
+            build/bash.inputs-hash
+            build/zsh.elf
+            build/zsh.inputs-hash
+            build/ncurses-port-work
+            build/glib-port-work
+            build/mc-port-work
+            build/bash-port-work
+            build/zsh-port-work
+            sysroot/aarch64-elf/lib/libncurses.a
+            sysroot/aarch64-elf/include/curses.h
+            sysroot/aarch64-elf/include/ncurses.h
+            sysroot/aarch64-elf/include/term.h
+            sysroot/aarch64-elf/include/unctrl.h
+            sysroot/aarch64-elf/lib/libglib-2.0.a
+            sysroot/aarch64-elf/include/glib-2.0
+            sysroot/aarch64-elf/lib/glib-2.0
+          # Tree-owned runtime + port recipes. restore-keys may rehydrate older
+          # binaries; Makefile rebuilds unless each build/<name>.inputs-hash
+          # matches scripts/artifact-inputs-hash.sh.
+          key: ports-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/artifact-inputs-hash.sh', 'scripts/build-ncurses.sh', 'scripts/build-glib.sh', 'scripts/build-mc.sh', 'scripts/build-bash.sh', 'scripts/build-zsh.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**', 'userland/ncurses/**', 'userland/glib/**') }}
+          restore-keys: |
+            ports-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Bootstrap sysroot, busybox, models
+        run: ./scripts/ci-bootstrap.sh
+
+      - name: Export CI build environment
+        run: |
+          echo "SOURCE_DATE_EPOCH=0" >> "$GITHUB_ENV"
+          ./scripts/ci-export-env.sh
+
+      - name: Heavy ports gate
+        run: make ports-test

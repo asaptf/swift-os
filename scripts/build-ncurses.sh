@@ -165,6 +165,11 @@ undefined="$("$NM" -u "$ROOT/build/ncdemo.elf")"
     fail "ncdemo.elf is not an AArch64 ELF"
 "$STRIP" "$ROOT/build/ncdemo.elf"
 
+# Content stamp so Makefile / CI refuse a binary whose tree-owned runtime
+# inputs moved (mtimes alone are unreliable after Actions cache restore).
+"$ROOT/scripts/artifact-inputs-hash.sh" ncurses >"$ROOT/build/ncurses.inputs-hash"
+
 echo "Built $ROOT/build/ncdemo.elf"
 echo "Installed $SYSROOT/lib/libncurses.a (fallbacks: $FALLBACKS)"
+echo "inputs-hash $(cat "$ROOT/build/ncurses.inputs-hash")"
 "$READELF" -h "$ROOT/build/ncdemo.elf" | grep -E 'Type:|Entry'

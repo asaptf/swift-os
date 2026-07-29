@@ -134,6 +134,11 @@ undefined="$("$NM" -u "$ROOT/build/glibdemo.elf")"
     fail "glibdemo.elf is not an AArch64 ELF"
 "$STRIP" "$ROOT/build/glibdemo.elf"
 
+# Content stamp so Makefile / CI refuse a binary whose tree-owned runtime
+# inputs moved (mtimes alone are unreliable after Actions cache restore).
+"$ROOT/scripts/artifact-inputs-hash.sh" glib >"$ROOT/build/glib.inputs-hash"
+
 echo "Built $ROOT/build/glibdemo.elf"
 echo "Installed $SYSROOT/lib/libglib-2.0.a + headers (glib ${VERSION})"
+echo "inputs-hash $(cat "$ROOT/build/glib.inputs-hash")"
 "$READELF" -h "$ROOT/build/glibdemo.elf" | grep -E 'Type:|Entry'
