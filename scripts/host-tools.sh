@@ -9,7 +9,19 @@
 # install prefixes. Does not exit on failure — callers check return status.
 
 # Sanitize the environment for an autoconf `./configure` of a freestanding
-# aarch64-elf (or similar) cross build. Two host-side traps without this:
+# aarch64-elf (or similar) cross build.
+#
+# Principle: prevent configure from *running* target binaries; do NOT answer
+# questions about target capabilities on its behalf. Feature / type probes that
+# autoconf can resolve by *compiling* (AC_CHECK_*, AC_COMPILE_IFELSE) must be
+# left to answer honestly — a wrong `yes` fabricates a capability the libc lacks
+# and the failure surfaces far from configure (e.g. bash `RLIMTYPE yes`,
+# `sigjmp_buf` after claiming POSIX sigsetjmp). Per-port scripts may still set
+# individual run-ifelse cache vars where a probe truly cannot be answered without
+# executing guest code — each such export must say why and what the true target
+# answer is (no blanket ac_cv_*/bash_cv_* lists here).
+#
+# Two host-side traps this helper does address:
 #
 # 1. cross_compiling: with only --host, autoconf sets cross_compiling=maybe and
 #    AC_PROG_CC *executes* the linked test binary to decide. On a same-arch host
@@ -20,7 +32,10 @@
 # 2. EXEEXT pollution: with CLICOLOR_FORCE=1 (common on macOS), configure's
 #    `ls conftest.*` command substitution embeds ANSI escapes into ac_cv_exeext.
 #    Generated Makefiles then fail with "missing separator" (not a BSD-vs-GNU
-#    make quirk). Clearing color force-vars makes ls emit bare names.
+#    make quirk). Clearing color force-vars makes ls emit bare names. Pre-seed
+#    empty EXEEXT / objext=o so a polluted prior shell env cannot leak in —
+#    these are output-format facts of the freestanding aarch64-elf toolchain,
+#    not libc capability answers.
 #
 # Call before invoking ./configure. Safe to call multiple times.
 # shellcheck disable=SC2034  # exported for child configure
@@ -29,7 +44,6 @@ autoconf_cross_prepare() {
     export CLICOLOR=0
     export LS_COLORS=
     # Freestanding Unix-like target: a.out with no extension (matches aarch64-elf).
-    # Pre-seed so a polluted prior shell env cannot leak into config.cache.
     export ac_cv_exeext=
     export ac_cv_objext=o
 }

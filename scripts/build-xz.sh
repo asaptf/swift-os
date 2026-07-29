@@ -174,6 +174,9 @@ libs="-lc -lgcc"
     export CPPFLAGS="-D_FORTIFY_SOURCE=0"
     export LDFLAGS="$configure_ldflags"
     export LIBS="$libs"
+    # Disable optional APIs that are missing or stub-only under freestanding
+    # newlib (honest "no", not fabricated "yes"). getrlimit exists as a weak
+    # stub but xz expects real limits; vasprintf/wcwidth are not provided.
     export ac_cv_func_getrlimit=no
     export ac_cv_func_vasprintf=no
     export ac_cv_func_wcwidth=no

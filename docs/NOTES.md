@@ -18,19 +18,78 @@ Class of bug that is invisible on macOS and fatal on same-arch Linux CI
    Makefiles then die with `missing separator` (was misread as a BSD-vs-GNU make
    quirk). ncurses was the first port to surface both faces of the bug.
 
+**Principle:** prevent configure from *running* target binaries; do **not**
+answer questions about target capabilities on its behalf. Feature and type
+probes that autoconf can resolve by *compiling* must be left to answer honestly.
+A wrong cache `yes` fabricates a capability the libc lacks and the failure
+surfaces far from configure. Per-port scripts may set individual run-ifelse
+cache vars only where a probe truly cannot be answered without executing guest
+code — each export must say why and what the true target answer is. No blanket
+`ac_cv_*` lists in `autoconf_cross_prepare`.
+
 **Fix (flags + env, not third-party patches):** every autoconf port configure
 must (a) pass `--host` *and* `--build=$(./config.guess)` so `cross_compiling=yes`
 before any run-ifelse, and (b) call `autoconf_cross_prepare` from
 `scripts/host-tools.sh` (clears `CLICOLOR_FORCE` / `LS_COLORS`, pre-seeds empty
-`ac_cv_exeext`). Applied to: ncurses, glib, mc, bash, zsh, pcre2, xz, libarchive,
-curl, rsync. nginx already had a dedicated overlay for its non-autoconf
-configure. zlib uses a custom non-autoconf configure (not in this class).
-newlib/gcc use real cross triples with `--target` and are not host-probe ports.
+`ac_cv_exeext` / `ac_cv_objext=o` — output-format facts only). Applied to:
+ncurses, glib, mc, bash, zsh, pcre2, xz, libarchive, curl, rsync. nginx already
+had a dedicated overlay for its non-autoconf configure. zlib uses a custom
+non-autoconf configure (not in this class). newlib/gcc use real cross triples
+with `--target` and are not host-probe ports.
 
-**Still unproven until CI:** same-arch Linux hang is fixed by construction
-(`cross_compiling=yes` skips the run), but wall-clock of the full `ci · ports`
-matrix (ncurses + glib + mc + bash + zsh) has never been measured on
-`ubuntu-24.04-arm`. Local macOS `make ncurses` wall time is the first data point.
+### Follow-up: deps + honest probes (2026-07-29)
+
+First working `ci · ports` on `ubuntu-24.04-arm` after the hang fix: ncurses
+cross-built (leg failed at 3m8s, not 6h). Two remaining defects:
+
+1. **mc-stack closure incomplete.** `build/glibdemo.elf` needs
+   `build/zlib-root/usr/lib/libz.a`; the leg neither built nor cached zlib.
+   **Actual closures** (not hoped-for):
+   - `ncdemo.elf` / ncurses: newlib only
+   - `glibdemo.elf` / glib: newlib + **zlib** (internal PCRE; no libffi/gobject)
+   - `mc.elf`: newlib + ncurses + glib + **zlib**
+   - `bash.elf`: newlib + ncurses (bundled readline)
+   - `zsh.elf`: newlib + ncurses
+   Makefile now has a file target for `build/zlib-root/usr/lib/libz.a`;
+   `glibdemo.elf` / `mc.elf` depend on it; build-glib/mc auto-invoke
+   `build-zlib.sh` if missing. `ci-ports.yml` mc-stack cache paths/keys include
+   zlib + `scripts/build-zlib.sh` + `ports/archivers/zlib/Port.json` so a
+   restore cannot omit a dep the leg now needs.
+
+2. **bash over-broad cache vars.** With honest `cross_compiling=yes`, two
+   pre-existing `bash_cv_*` answers fabricated capabilities:
+   - `bash_cv_type_rlimit=yes` → `#define RLIMTYPE yes` → `unknown type name
+     'yes'`. **Removed.** `BASH_TYPE_RLIMIT` is an `AC_COMPILE_IFELSE` for
+     `rlim_t`; `userland/compat/sys/resource.h` provides `rlim_t` /
+     `struct rlimit`, so the compile probe answers `rlim_t` honestly.
+   - `bash_cv_func_sigsetjmp=present` → `HAVE_POSIX_SIGSETJMP` →
+     `posixjmp.h` uses `sigjmp_buf`. **Set to `missing`.** **Toolchain fact:
+     newlib for `aarch64-elf` has `setjmp`/`longjmp`/`jmp_buf` only — no
+     `sigjmp_buf`, `sigsetjmp`, or `siglongjmp` in `<setjmp.h>` or libc.**
+     (node-compat maps them to plain setjmp for OpenSSL armcap; bash falls
+     back to `jmp_buf` when the probe is missing.) Cross default would claim
+     present when `bash_cv_posix_signals=yes`, so the override is required.
+   - After configure, bash still needed **compat** fixes for real target gaps:
+     - `userland/compat/sys/resource.h` had `struct rusage { long ru_utime[2]; … }`,
+       which is not POSIX and breaks bash's `time` builtin (`difftimeval`
+       expects `struct timeval *`). Upgraded to timeval fields + the usual BSD
+       rusage counters (getrusage remains a zeroing stub).
+     - **Toolchain fact:** bare `aarch64-elf` newlib never defines
+       `_POSIX_VERSION` (only RTEMS/Cygwin/XMK paths in `<sys/features.h>`).
+       bash's `posixwait.h` then takes the non-POSIX `union wait` branch and
+       fails with `field 'status' has incomplete type`. Fixed by advertising
+       `_POSIX_VERSION=200809L` in `userland/compat/features.h` and the bash
+       CC wrapper (`-D_POSIX_VERSION=200809L`).
+     - **Toolchain fact:** newlib declares `mkfifo` in `<sys/stat.h>` but the
+       aarch64-elf libc does not provide the symbol. bash then builds its own
+       K&R `mkfifo(char *path, …)` which conflicts with the `const char *`
+       prototype under GCC 14. Weak `mkfifo` ENOSYS stub in `stubs.c` (real
+       FIFOs remain a product follow-up; process substitution is unavailable).
+
+**Still unproven until CI:** full `ci · ports` matrix wall-clock on
+`ubuntu-24.04-arm` with the zlib closure + honest bash probes; in-QEMU
+`bash_test`/`zsh_test`/`glib_test`/`mc_test` only when the corresponding
+port builds cleanly on the runner.
 
 ## malloc lock depth: no `__thread` / emutls (2026-07-28)
 
@@ -118,7 +177,9 @@ functions, arithmetic. `zsh.elf` → `/bin/zsh`.
   `zsh_cv_*` variables override cross-compile probes.
 - **Configure flags:** `--disable-dynamic --disable-multibyte --disable-pcre
   --disable-cap --disable-gdbm --with-term-lib=ncurses --with-fndir=no
-  --with-site-fndir=no`. `--disable-multibyte` avoids wide-char conversion that
+  --with-site-fndir=no`. Post-configure: disable `zsh/termcap` (GCC 14 rejects
+  zsh's non-const `boolcodes` redefinition against ncurses `term.h`; ZLE uses
+  terminfo + ncurses). `--disable-multibyte` avoids wide-char conversion that
   newlib's bare-metal libc may not fully support. `--disable-dynamic` compiles
   all modules statically into the binary (no dlopen needed).
 - **Post-configure module trim:** `config.modules` entries for
@@ -8822,12 +8883,10 @@ macOS host:
 - `scripts/build-bash.sh` read `$BASH_VERSION` as its version override — a bash
   builtin the shell sets to its own version (macOS host bash 3.2.57), so it fetched
   a non-existent tarball (404). Renamed the override to `$BASH_PORT_VERSION`.
-- The SH1 bash port still does not cross-compile here (newlib lacks `sigjmp_buf`;
-  configure mis-sets `RLIMTYPE`), and `bash.elf` was an unconditional base-image
-  bake. Added an opt-out `INCLUDE_BASH ?= 1` gate (mirrors `INCLUDE_NODE`); default
-  preserves the bake, and `rsync-test` builds with `INCLUDE_BASH=0` since rsync only
-  needs the OS to boot under busybox ash + pkg + networking. Fixing the bash
-  cross-build remains an SH1 follow-up.
+- The SH1 bash port previously failed to cross-compile (newlib lacks `sigjmp_buf`;
+  `bash_cv_type_rlimit=yes` produced `RLIMTYPE yes`). Fixed 2026-07-29 — see
+  "Autoconf cross-compile" follow-up above. `INCLUDE_BASH` remains the base-image
+  pack gate; `rsync-test` still uses `INCLUDE_BASH=0`.
 
 ### PT1 — process-table capacity: unify the slot cap and raise 16 → 64 (DONE, 2026-06-24)
 

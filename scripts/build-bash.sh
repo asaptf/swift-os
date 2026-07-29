@@ -43,20 +43,19 @@ require_exe() { command -v "$1" >/dev/null 2>&1 || fail "missing executable: $1"
 require_exe "$CC"; require_exe make; require_exe tar
 [[ -f "$SYSROOT/lib/libncurses.a" ]] || fail "libncurses.a missing. Run: make ncurses"
 
-# Runtime objects (crt0 + newlib syscalls + compat stubs).
+# Runtime objects (crt0 + newlib syscalls + compat stubs). Always rebuild
+# stubs.o so mkfifo and other recent stubs land in the configure link set.
 FEAT="-D_GNU_SOURCE -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES \
       -D_POSIX_READER_WRITER_LOCKS -D_POSIX_SEMAPHORES -D_POSIX_BARRIERS \
       -DSSIZE_MAX=__LONG_MAX__"
-if [[ ! -f "$RT/stubs.o" ]]; then
-    mkdir -p "$RT"
-    $CC -ffreestanding -Os -isystem "$COMPAT" -isystem "$SYSROOT/include" \
-        -c "$ROOT/userland/lib/crt0_newlib.S"     -o "$RT/crt0.o"
-    $CC -ffreestanding -Os -isystem "$COMPAT" -isystem "$SYSROOT/include" \
-        -c "$ROOT/userland/lib/newlib_syscalls.c" -o "$RT/sys.o"
-    $CC -ffreestanding -std=gnu11 -Os $FEAT \
-        -isystem "$COMPAT" -isystem "$SYSROOT/include" \
-        -c "$ROOT/userland/compat/stubs.c"        -o "$RT/stubs.o"
-fi
+mkdir -p "$RT"
+$CC -ffreestanding -Os -isystem "$COMPAT" -isystem "$SYSROOT/include" \
+    -c "$ROOT/userland/lib/crt0_newlib.S"     -o "$RT/crt0.o"
+$CC -ffreestanding -Os -isystem "$COMPAT" -isystem "$SYSROOT/include" \
+    -c "$ROOT/userland/lib/newlib_syscalls.c" -o "$RT/sys.o"
+$CC -ffreestanding -std=gnu11 -Os $FEAT \
+    -isystem "$COMPAT" -isystem "$SYSROOT/include" \
+    -c "$ROOT/userland/compat/stubs.c"        -o "$RT/stubs.o"
 
 mkdir -p "$WORK"
 [[ -f "$TARBALL" ]] || { echo "Fetching bash ${VERSION}..."; curl -fsSL -o "$TARBALL" "$URL"; }
@@ -68,8 +67,11 @@ WRAP="$WORK/swiftos-cc"
 cat >"$WRAP" <<EOF
 #!/usr/bin/env bash
 real_cc="$CC"
+# _POSIX_VERSION: newlib aarch64-elf leaves it undefined (RTEMS/Cygwin only).
+# bash's posixwait.h needs it for `typedef int WAIT` (else incomplete union wait).
 pre=(-ffreestanding -std=gnu11 -Os -Wno-error
-     -D_GNU_SOURCE -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES
+     -D_GNU_SOURCE -D_POSIX_VERSION=200809L
+     -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES
      -D_POSIX_READER_WRITER_LOCKS -D_POSIX_SEMAPHORES -D_POSIX_BARRIERS
      -DSSIZE_MAX=__LONG_MAX__
      -isystem "$COMPAT" -isystem "$SYSROOT/include"
@@ -101,35 +103,66 @@ perl -i -pe '
 grep -q 'swift-os: bare-env default' "$SRC/shell.c" \
     || fail "shell.c patch did not apply — set_default_locale anchor not found"
 
-# --- configure (cross-compile with bash_cv_ overrides for all TRY_RUN tests) -
+# --- source patch: declare count_all_jobs when job control is off ------------
+# parse.y / y.tab.c use count_all_jobs() for prompt \j. With
+# --without-job-control the jobs.h include is skipped and only
+# cleanup_dead_jobs is declared; nojobs.c still provides count_all_jobs
+# (returns 0). GCC 14+ treats the implicit declaration as an error.
+# Patch the pregenerated y.tab.c (and parse.y for consistency) — do NOT
+# regenerate with host bison: macOS bison 2.3 chokes on YYEOF in bash 5.2.
+for f in "$SRC/y.tab.c" "$SRC/parse.y"; do
+    [[ -f "$f" ]] || continue
+    perl -i -pe '
+        if (/extern int cleanup_dead_jobs PARAMS\(\(void\)\);/ && !/count_all_jobs/) {
+            $_ .= "extern int count_all_jobs PARAMS((void));  /* swift-os: nojobs.c; GCC 14 */\n";
+        }
+    ' "$f"
+done
+grep -q 'swift-os: nojobs.c' "$SRC/y.tab.c" \
+    || fail "y.tab.c patch did not apply — cleanup_dead_jobs anchor not found"
+# Keep shipped y.tab.c newer than parse.y so make does not invoke host bison.
+touch "$SRC/y.tab.c" "$SRC/y.tab.h"
+
+# --- configure ----------------------------------------------------------------
+# Principle (see host-tools.sh autoconf_cross_prepare): prevent running guest
+# binaries; do not answer compile-time type/capability probes. Only override
+# AC_RUN_IFELSE cache vars whose cross-compile *default* is wrong for newlib
+# freestanding, each with a why/what comment.
+#
+# Deliberately NOT set:
+#   bash_cv_type_rlimit — AC_COMPILE_IFELSE for rlim_t (compat has rlim_t).
+#     Exporting `yes` produced `#define RLIMTYPE yes` → unknown type name 'yes'.
+#   bash_cv_have_mbstate_t, bash_cv_decl_ioctl, bash_cv_terminfo_lib — compile
+#     / link probes; leave to the cross CC + our headers/libs.
 (
     cd "$SRC"
     export CC="$WRAP" AR=aarch64-elf-ar RANLIB=aarch64-elf-ranlib
     export CFLAGS="" CPPFLAGS="" LDFLAGS="" LIBS=""
 
-    # Override all AC_TRY_RUN tests that cannot run on the host when cross-compiling.
-    # Values chosen for a static freestanding newlib target.
-    export bash_cv_func_sigsetjmp=present
-    export bash_cv_have_mbstate_t=yes
-    export bash_cv_func_strcoll_works=yes
+    # newlib has setjmp/longjmp but no sigjmp_buf / sigsetjmp / siglongjmp
+    # (headers + libc). Cross default would claim "present" when
+    # bash_cv_posix_signals=yes, which fabricates HAVE_POSIX_SIGSETJMP and
+    # fails in include/posixjmp.h. Fall back to plain jmp_buf.
+    export bash_cv_func_sigsetjmp=missing
+    # Runtime behaviour probes (cannot compile-answer): freestanding newlib facts.
+    export bash_cv_func_strcoll_works=yes          # newlib strcoll is strcmp-class
     export bash_cv_func_ctype_nonascii=no
     export bash_cv_wcwidth_broken=no
-    export bash_cv_func_printf_a_format=yes
-    export bash_cv_sys_named_pipes=absent      # no /dev/fd or /proc/self/fd
-    export bash_cv_job_control_missing=present # consistent with --without-job-control
+    export bash_cv_func_printf_a_format=yes        # %a/%A supported enough for bash
+    export bash_cv_sys_named_pipes=absent          # no /dev/fd or /proc/self/fd
+    # "missing" = job-control facilities absent (setpgid/tcsetpgrp not real yet).
+    # Matches --without-job-control; do not claim present.
+    export bash_cv_job_control_missing=missing
     export bash_cv_opendir_not_robust=no
     export bash_cv_getenv_redef=no
     export bash_cv_must_reinstall_sighandlers=no
     export bash_cv_func_setvbuf_reversed=no
     export bash_cv_ulimit_maxfds=no
-    export bash_cv_type_rlimit=yes
-    export bash_cv_decl_ioctl=yes
     export bash_cv_func_lstat_dereferences_slashed_symlink=yes
-    export bash_cv_terminfo_lib=ncurses
     export bash_cv_dup2_broken=no
     export bash_cv_pgrp_pipe=no
-    export bash_cv_unusable_rtsigs=yes         # no RT signal delivery
-    export bash_cv_func_sbrk=no
+    export bash_cv_unusable_rtsigs=yes             # no RT signal delivery
+    export bash_cv_func_sbrk=no                    # freestanding heap is not sbrk
     export bash_cv_dev_stdin=absent
     export bash_cv_dev_fd=absent
 

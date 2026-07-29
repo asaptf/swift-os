@@ -4638,13 +4638,24 @@ $(BUILD)/ncdemo.elf: $(BUILD)/ncurses.inputs-expected .PORT_INPUTS_FORCE $(SYSRO
 	fi
 	./scripts/build-ncurses.sh
 
+# GL1 dep: static zlib staged under build/zlib-root (GLib core links -lz;
+# MC reuses the same root). File target so `make glib`/`make mc` build the
+# closure without a separate manual step. Uses the same script as the
+# ports-zlib-repo-fixture (package + signed repo are side products).
+$(BUILD)/zlib-root/usr/lib/libz.a: $(SYSROOT)/lib/libc.a \
+		ports/archivers/zlib/Port.json scripts/build-zlib.sh \
+		$(SWPORT) $(SWPKG) $(PKGREPO)
+	./scripts/build-zlib.sh
+
 # GL1: cross-build static GLib 2.56 core + the glibdemo proof binary.
-glib:
+# Closure: newlib + zlib (no ncurses, no libffi — gobject not built).
+glib: $(BUILD)/zlib-root/usr/lib/libz.a
 	./scripts/build-glib.sh
 
 # glibdemo.elf is produced by `make glib` (slow; needs newlib + zlib + network).
 # Content stamp covers tree-owned runtime + recipe + glibdemo.c.
-$(BUILD)/glibdemo.elf: $(BUILD)/glib.inputs-expected .PORT_INPUTS_FORCE $(SYSROOT)/lib/libc.a
+$(BUILD)/glibdemo.elf: $(BUILD)/glib.inputs-expected .PORT_INPUTS_FORCE \
+		$(SYSROOT)/lib/libc.a $(BUILD)/zlib-root/usr/lib/libz.a
 	@if [ -f $@ ] && [ -f $(BUILD)/glib.inputs-hash ] \
 	    && cmp -s $(BUILD)/glib.inputs-hash $(BUILD)/glib.inputs-expected; then \
 		exit 0; \
@@ -4658,14 +4669,16 @@ $(BUILD)/glibdemo.elf: $(BUILD)/glib.inputs-expected .PORT_INPUTS_FORCE $(SYSROO
 	fi
 	./scripts/build-glib.sh
 
-# MC1: cross-build Midnight Commander (needs `make ncurses` + `make glib` first).
-mc: $(BUILD)/ncdemo.elf $(BUILD)/glibdemo.elf
+# MC1: cross-build Midnight Commander.
+# Closure: newlib + ncurses + glib + zlib (zlib via glibdemo dep + direct).
+mc: $(BUILD)/ncdemo.elf $(BUILD)/glibdemo.elf $(BUILD)/zlib-root/usr/lib/libz.a
 	./scripts/build-mc.sh
 
 # mc.elf is produced by `make mc` (slow; needs newlib + ncurses + glib + zlib).
 # Depends on content-fresh ncdemo/glibdemo so sysroot libs exist when rebuilding.
 $(BUILD)/mc.elf: $(BUILD)/mc.inputs-expected .PORT_INPUTS_FORCE \
-		$(BUILD)/ncdemo.elf $(BUILD)/glibdemo.elf $(SYSROOT)/lib/libc.a
+		$(BUILD)/ncdemo.elf $(BUILD)/glibdemo.elf \
+		$(BUILD)/zlib-root/usr/lib/libz.a $(SYSROOT)/lib/libc.a
 	@if [ -f $@ ] && [ -f $(BUILD)/mc.inputs-hash ] \
 	    && cmp -s $(BUILD)/mc.inputs-hash $(BUILD)/mc.inputs-expected; then \
 		exit 0; \

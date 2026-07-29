@@ -64,7 +64,8 @@ cat >"$WRAP" <<EOF
 #!/usr/bin/env bash
 real_cc="$CC"
 pre=(-ffreestanding -std=gnu11 -Os -Wno-error
-     -D_GNU_SOURCE -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES
+     -D_GNU_SOURCE -D_POSIX_VERSION=200809L
+     -D_POSIX_THREADS -D_UNIX98_THREAD_MUTEX_ATTRIBUTES
      -D_POSIX_READER_WRITER_LOCKS -D_POSIX_SEMAPHORES -D_POSIX_BARRIERS
      -DSSIZE_MAX=__LONG_MAX__
      -isystem "$COMPAT" -isystem "$SYSROOT/include"
@@ -96,14 +97,14 @@ grep -q 'swift-os: bare-env default' "$SRC/Src/main.c" \
     || fail "Src/main.c patch did not apply — 'return zsh_main' anchor not found"
 
 # --- configure ---------------------------------------------------------------
-# zsh_cv_* cache variables override all AC_TRY_RUN probes that cannot execute
-# during cross-compilation. Values are for 64-bit AArch64 + freestanding newlib.
+# Only override probes that cannot be answered by compiling, or whose compile
+# probe is known-wrong under freestanding newlib (see host-tools.sh principle).
 (
     cd "$SRC"
     export CC="$WRAP" AR=aarch64-elf-ar RANLIB=aarch64-elf-ranlib
     export CFLAGS="" CPPFLAGS="" LDFLAGS="" LIBS=""
 
-    # Data-model probes (AArch64: long=64, off_t=64, ino_t=64).
+    # Data-model run-ifelse probes (AArch64 LP64: long/off_t/ino_t are 64-bit).
     export zsh_cv_c_have_union_init=yes
     export zsh_cv_c_variable_length_arrays=yes
     export zsh_cv_long_is_64_bit=yes
@@ -114,13 +115,14 @@ grep -q 'swift-os: bare-env default' "$SRC/Src/main.c" \
     export zsh_cv_header_sys_ioctl_h_tiocgwinsz=no
     # Use ncurses for ZLE terminal operations (tgetent etc.).
     export zsh_cv_term_lib=ncurses
-    # newlib's <sys/time.h> already defines `struct timezone`; the compile probe
-    # mis-detects it under the cross CC, so force it on or zsh re-defines the
-    # struct and the build fails with a redefinition error.
+    # Compile probe mis-detects under cross CC: newlib's <sys/time.h> already
+    # defines struct timezone; without this zsh redefines it and the build dies.
     export zsh_cv_type_exists_struct_timezone=yes
-    # newlib's struct rusage lacks the timeval ru_utime/ru_stime zsh's job-timing
-    # code expects; force getrusage off so zsh uses the times()/struct tms path.
-    export ac_cv_func_getrusage=no
+    # getrusage: leave to the link probe. userland/compat/sys/resource.h now
+    # provides timeval-based struct rusage (was long[2], which broke zsh/bash).
+    # Stub returns zeros; enough for configure + compile.
+    # Also add _POSIX_VERSION so wait-status paths match bash (bare newlib
+    # leaves it undefined outside RTEMS/Cygwin).
 
     # --host alone leaves cross_compiling=maybe; AC_PROG_CC then runs a.out and
     # hangs on same-arch Linux CI. See scripts/host-tools.sh autoconf_cross_*.
@@ -137,11 +139,11 @@ grep -q 'swift-os: bare-env default' "$SRC/Src/main.c" \
         --disable-dependency-tracking
 
     # Post-configure: force-disable modules that use network/system APIs beyond
-    # what our stubs cover (they would compile but add dead weight or confuse
-    # configure probe results). The zsh/net/* modules need working socket I/O;
-    # zsh/system needs sysconf/getrlimit beyond what stubs offer.
+    # what our stubs cover, or that clash with ncurses headers under GCC 14.
+    # zsh/termcap redefines boolcodes/numcodes when the const-pointer link probe
+    # fails (GCC 14 -Wincompatible-pointer-types); ZLE uses ncurses + terminfo.
     if [[ -f "$SRC/config.modules" ]]; then
-        for mod in zsh/net/socket zsh/net/tcp zsh/langinfo zsh/system; do
+        for mod in zsh/net/socket zsh/net/tcp zsh/langinfo zsh/system zsh/termcap; do
             if grep -q "^name=$mod " "$SRC/config.modules" 2>/dev/null; then
                 # perl -i (not `sed -i`, whose -i needs a backup-suffix arg on
                 # BSD/macOS sed) so the in-place edit is portable.

@@ -106,10 +106,10 @@ libs="-Wl,--start-group -lc -lm -lgcc -Wl,--end-group"
     export BUILD_CPPFLAGS=""
     export BUILD_LDFLAGS=""
     export BUILD_LIBS=""
-    # Cross-build cache-var overrides: ncurses runs compile-AND-run configure
-    # probes that cannot execute on the host. Seed the known answers for the
-    # swift-os target (verified facts: poll works on the tty, fork works,
-    # nanosleep is implemented; chtype is a long; bool is 1 byte).
+    # Run-ifelse-only answers (cross cannot execute freestanding a.out). Each
+    # is a verified swift-os target fact, not a blanket capability claim —
+    # compile-time probes are left alone. poll/fork/nanosleep work; chtype and
+    # mmask_t are long on our freestanding aarch64; bool is 1-byte unsigned.
     export cf_cv_working_poll=yes
     export cf_cv_func_nanosleep=yes
     export cf_cv_func_mkstemp=yes

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // sys/resource.h - full rusage for the Node.js/libuv masquerade.
 //
-// userland/compat's rusage is minimal (ru_utime as long[2], no named fields),
-// but libuv's uv_getrusage reads ru_utime.tv_sec and the full BSD field set.
-// This node-compat header reuses compat's include guard so it fully supersedes
-// compat's definition for the Node build only; other ports keep the minimal one.
+// Mirrors userland/compat/sys/resource.h (timeval-based rusage + rlimit). Kept
+// as a node-compat path so the masquerade include tree stays self-contained;
+// the include guard matches compat so either tree wins cleanly.
 #ifndef _SWIFTOS_SYS_RESOURCE_H
 #define _SWIFTOS_SYS_RESOURCE_H
 

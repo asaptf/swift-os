@@ -55,7 +55,13 @@ require_exe "$CC"; require_exe "$AR"; require_exe "$RANLIB"
 require_exe "$READELF"; require_exe "$NM"; require_exe "$STRIP"
 require_exe make; require_exe tar
 [[ -f "$SYSROOT/lib/libc.a" ]] || fail "newlib sysroot missing. Run: make newlib"
-[[ -f "$ZLIBROOT/lib/libz.a" ]] || fail "zlib missing. Run: scripts/build-zlib.sh (build/zlib-root)"
+# Closure: GLib core needs static zlib. Build it if absent so `make glib` and
+# the mc-stack CI leg do not fail three minutes in on a missing dep.
+if [[ ! -f "$ZLIBROOT/lib/libz.a" ]]; then
+    echo "zlib missing under $ZLIBROOT; building via scripts/build-zlib.sh..."
+    "$ROOT/scripts/build-zlib.sh"
+fi
+[[ -f "$ZLIBROOT/lib/libz.a" ]] || fail "zlib missing after build-zlib.sh ($ZLIBROOT/lib/libz.a)"
 
 # Feature defines: enable newlib's pthread rwlock/barrier types, force gnu11
 # (GCC 16 defaults to C23 where GLib 2.56's `bool` identifier is illegal), and
@@ -86,7 +92,11 @@ $CC -ffreestanding -std=gnu11 -Os $FEAT -isystem "$COMPAT" -isystem "$SYSROOT/in
     export ZLIB_CFLAGS="-I$ZLIBROOT/include" ZLIB_LIBS="-L$ZLIBROOT/lib -lz"
     export LIBFFI_CFLAGS=" " LIBFFI_LIBS="-lffi"   # satisfies PKG_CHECK_MODULES; gobject/libffi never built
     export PKG_CONFIG=true
-    # cross compile-AND-run probe answers for the swift-os target
+    # Run-ifelse / cross-only answers (cannot execute freestanding a.out).
+    # stack_grows/uscore/va_copy/long_long_format are ABI facts of aarch64.
+    # posix_getpwuid_r/getgrgid_r: newlib lacks the POSIX reentrant forms we need.
+    # gnugettext*_libc=yes: use weak gettext stubs in userland/compat (not full
+    # libintl). qsort_r: newlib has no qsort_r. Compile-time type probes left alone.
     export glib_cv_stack_grows=no glib_cv_uscore=no glib_cv_va_copy=yes glib_cv___va_copy=yes \
         glib_cv_va_val_copy=yes glib_cv_rtldglobal_broken=no glib_cv_long_long_format=ll \
         ac_cv_func_posix_getpwuid_r=no ac_cv_func_posix_getgrgid_r=no \
