@@ -37,7 +37,13 @@ require_exe() { command -v "$1" >/dev/null 2>&1 || fail "missing executable: $1"
 require_exe "$CC"; require_exe make; require_exe tar; require_exe perl
 [[ -f "$SYSROOT/lib/libncurses.a" ]] || fail "libncurses.a missing. Run: make ncurses"
 [[ -f "$SYSROOT/lib/libglib-2.0.a" ]] || fail "libglib-2.0.a missing. Run: make glib"
-[[ -f "$ZLIBROOT/lib/libz.a" ]] || fail "zlib missing. Run: scripts/build-zlib.sh"
+# Closure: MC links -lz (GLib + compression). Auto-build if the Makefile
+# file dep was skipped (direct script invocation).
+if [[ ! -f "$ZLIBROOT/lib/libz.a" ]]; then
+    echo "zlib missing under $ZLIBROOT; building via scripts/build-zlib.sh..."
+    "$ROOT/scripts/build-zlib.sh"
+fi
+[[ -f "$ZLIBROOT/lib/libz.a" ]] || fail "zlib missing after build-zlib.sh ($ZLIBROOT/lib/libz.a)"
 # Runtime objects come from the glib build; rebuild if absent.
 if [[ ! -f "$RT/stubs.o" ]]; then
     mkdir -p "$RT"

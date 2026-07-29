@@ -272,6 +272,9 @@ W int setuid(uid_t u) { (void)u; return 0; }
 W int setgid(gid_t g) { (void)g; return 0; }
 W int seteuid(uid_t u) { (void)u; return 0; }
 W int setegid(gid_t g) { (void)g; return 0; }
+// Single-user root: real/effective are always 0; accept any set* and succeed.
+W int setreuid(uid_t r, uid_t e) { (void)r; (void)e; return 0; }
+W int setregid(gid_t r, gid_t e) { (void)r; (void)e; return 0; }
 W int getgroups(int n, gid_t *l) { (void)n; (void)l; return 0; }
 W int initgroups(const char *user, gid_t group) { (void)user; (void)group; return 0; }
 W pid_t getppid(void) { return 1; }
@@ -493,6 +496,9 @@ W int ioctl(int fd, unsigned long req, ...) {
 W int ftruncate(int fd, off_t length) { return sysret(sys3(SYS_FTRUNCATE, fd, (long)length, 0)); }
 W int lstat(const char *path, struct stat *st) { return stat(path, st); }
 W int mknod(const char *p, mode_t m, dev_t d) { (void)p; (void)m; (void)d; errno = ENOSYS; return -1; }
+// Header-declared in newlib <sys/stat.h> but not linked in aarch64-elf libc.
+// Needed so bash does not compile its own K&R mkfifo against the const prototype.
+W int mkfifo(const char *path, mode_t mode) { (void)path; (void)mode; errno = ENOSYS; return -1; }
 W int uname(struct utsname *u) {
     if (!u) { errno = EFAULT; return -1; }
     strcpy(u->sysname, "swift-os"); strcpy(u->nodename, "swiftos");
@@ -3164,6 +3170,12 @@ W int ttyname_r(int fd, char *buf, size_t n) {
     (void)fd; const char *s = "/dev/console";
     size_t i = 0; while (s[i] && i + 1 < n) { buf[i] = s[i]; i++; } if (n) buf[i] = 0;
     return 0;
+}
+// newlib declares ttyname but aarch64-elf libc does not link it.
+W char *ttyname(int fd) {
+    static char buf[32];
+    if (ttyname_r(fd, buf, sizeof(buf)) != 0) return 0;
+    return buf;
 }
 
 // signals: route to our minimal kernel disposition (syscall 9); masks are no-ops.

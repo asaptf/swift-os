@@ -184,6 +184,9 @@ libs="-Wl,--start-group -lzstd -llzma -lbz2 -lz -lc -lgcc -Wl,--end-group"
     export CPPFLAGS="-D_FORTIFY_SOURCE=0 $dep_cppflags"
     export LDFLAGS="$configure_ldflags"
     export LIBS="$libs"
+    # pthread: freestanding port builds single-threaded; header presence would
+    # pull optional code we do not want. fchdir: symbol exists (compat stub);
+    # leave presence=yes so configure links, runtime is ENOSYS until real fchdir.
     export ac_cv_header_pthread_h=no
     export ac_cv_func_fchdir=yes
     # --host alone leaves cross_compiling=maybe; AC_PROG_CC then runs a.out and

@@ -52,16 +52,20 @@ jobs:
             models
             build/busybox.elf
             build/busybox.inputs-hash
-            build/zlib-root
             build/swport-distfiles
           key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/artifact-inputs-hash.sh', 'scripts/busybox-inputs-hash.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**') }}
           restore-keys: |
             bootstrap-${{ runner.os }}-${{ runner.arch }}-
 
-      # Per-group ports caches: independent path sets and keys so a finished
-      # leg writes its own cache even if another dies at the 6h limit.
-      # restore-keys may rehydrate older binaries; Makefile stamps rebuild when
-      # build/<name>.inputs-hash does not match scripts/artifact-inputs-hash.sh.
+      # Per-group ports caches: each leg stores its full *dependency closure*
+      # (not just the leaf .elf). A key that omits a dep script can restore a
+      # cache missing that dep and fail minutes later. restore-keys may rehydrate
+      # older binaries; Makefile stamps rebuild when build/<name>.inputs-hash
+      # does not match scripts/artifact-inputs-hash.sh.
+      # Closures:
+      #   mc-stack — zlib + ncurses + glib + mc
+      #   bash     — ncurses + bash
+      #   zsh      — ncurses + zsh
       # hashFiles is per-step (GHA does not split a CSV matrix string into args).
 
       - name: Cache mc-stack port build outputs
@@ -69,12 +73,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
+            build/zlib-root
+            build/zlib-port-work
+            build/zlib-port-runtime
             build/ncdemo.elf
             build/ncurses.inputs-hash
             build/ncurses-port-work
             build/glibdemo.elf
             build/glib.inputs-hash
             build/glib-port-work
+            build/glib-port-runtime
             build/mc.elf
             build/mc-skins
             build/mc.inputs-hash
@@ -87,7 +95,7 @@ jobs:
             sysroot/aarch64-elf/lib/libglib-2.0.a
             sysroot/aarch64-elf/include/glib-2.0
             sysroot/aarch64-elf/lib/glib-2.0
-          key: ports-mc-stack-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/artifact-inputs-hash.sh', 'scripts/build-ncurses.sh', 'scripts/build-glib.sh', 'scripts/build-mc.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**', 'userland/ncurses/**', 'userland/glib/**') }}
+          key: ports-mc-stack-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/artifact-inputs-hash.sh', 'scripts/build-zlib.sh', 'scripts/build-ncurses.sh', 'scripts/build-glib.sh', 'scripts/build-mc.sh', 'ports/archivers/zlib/Port.json', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**', 'userland/ncurses/**', 'userland/glib/**') }}
           restore-keys: |
             ports-mc-stack-${{ runner.os }}-${{ runner.arch }}-
 
@@ -99,6 +107,7 @@ jobs:
             build/bash.elf
             build/bash.inputs-hash
             build/bash-port-work
+            build/bash-port-runtime
             build/ncdemo.elf
             build/ncurses.inputs-hash
             build/ncurses-port-work
@@ -107,7 +116,7 @@ jobs:
             sysroot/aarch64-elf/include/ncurses.h
             sysroot/aarch64-elf/include/term.h
             sysroot/aarch64-elf/include/unctrl.h
-          key: ports-bash-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/artifact-inputs-hash.sh', 'scripts/build-bash.sh', 'scripts/build-ncurses.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**', 'userland/ncurses/**') }}
+          key: ports-bash-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/artifact-inputs-hash.sh', 'scripts/build-bash.sh', 'scripts/build-ncurses.sh', 'scripts/host-tools.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**', 'userland/ncurses/**') }}
           restore-keys: |
             ports-bash-${{ runner.os }}-${{ runner.arch }}-
 
@@ -119,6 +128,7 @@ jobs:
             build/zsh.elf
             build/zsh.inputs-hash
             build/zsh-port-work
+            build/zsh-port-runtime
             build/ncdemo.elf
             build/ncurses.inputs-hash
             build/ncurses-port-work
@@ -127,7 +137,7 @@ jobs:
             sysroot/aarch64-elf/include/ncurses.h
             sysroot/aarch64-elf/include/term.h
             sysroot/aarch64-elf/include/unctrl.h
-          key: ports-zsh-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/artifact-inputs-hash.sh', 'scripts/build-zsh.sh', 'scripts/build-ncurses.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**', 'userland/ncurses/**') }}
+          key: ports-zsh-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/artifact-inputs-hash.sh', 'scripts/build-zsh.sh', 'scripts/build-ncurses.sh', 'scripts/host-tools.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**', 'userland/ncurses/**') }}
           restore-keys: |
             ports-zsh-${{ runner.os }}-${{ runner.arch }}-
 
@@ -148,19 +158,21 @@ jobs:
           START=$(date +%s)
           case "${GROUP}" in
             mc-stack)
-              # Timed sequential builds so logs show per-port wall time, then harnesses.
+              # Full closure, timed: zlib → ncurses → glib → mc, then harnesses.
+              t0=$(date +%s); make build/zlib-root/usr/lib/libz.a; echo "PORTS_TIMING port=zlib wall_s=$(( $(date +%s) - t0 ))"
               t0=$(date +%s); make build/ncdemo.elf; echo "PORTS_TIMING port=ncdemo wall_s=$(( $(date +%s) - t0 ))"
               t0=$(date +%s); make build/glibdemo.elf; echo "PORTS_TIMING port=glibdemo wall_s=$(( $(date +%s) - t0 ))"
               t0=$(date +%s); make build/mc.elf; echo "PORTS_TIMING port=mc wall_s=$(( $(date +%s) - t0 ))"
               t0=$(date +%s); make ports-mc-stack-test; echo "PORTS_TIMING phase=harnesses+pack wall_s=$(( $(date +%s) - t0 ))"
               ;;
             bash)
-              # ncdemo first so bash wall time is not dominated by the shared dep.
+              # Closure: ncurses → bash. ncdemo first so bash wall time is pure.
               t0=$(date +%s); make build/ncdemo.elf; echo "PORTS_TIMING port=ncdemo wall_s=$(( $(date +%s) - t0 ))"
               t0=$(date +%s); make build/bash.elf; echo "PORTS_TIMING port=bash wall_s=$(( $(date +%s) - t0 ))"
               t0=$(date +%s); make ports-bash-test; echo "PORTS_TIMING phase=harnesses+pack wall_s=$(( $(date +%s) - t0 ))"
               ;;
             zsh)
+              # Closure: ncurses → zsh.
               t0=$(date +%s); make build/ncdemo.elf; echo "PORTS_TIMING port=ncdemo wall_s=$(( $(date +%s) - t0 ))"
               t0=$(date +%s); make build/zsh.elf; echo "PORTS_TIMING port=zsh wall_s=$(( $(date +%s) - t0 ))"
               t0=$(date +%s); make ports-zsh-test; echo "PORTS_TIMING phase=harnesses+pack wall_s=$(( $(date +%s) - t0 ))"

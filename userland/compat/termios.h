@@ -48,13 +48,19 @@ struct termios {
 /* c_oflag */
 #define OPOST  0x0001
 #define ONLCR  0x0004
-/* c_cflag */
+/* c_cflag — values-only for ports; the kernel ignores most of these.
+ * PARENB/PARODD/CSTOPB/HUPCL needed by bash shtty/readline; not wired to
+ * the serial hardware yet. */
 #define CSIZE  0x0030
 #define CS5    0x0000
 #define CS6    0x0010
 #define CS7    0x0020
 #define CS8    0x0030
+#define CSTOPB 0x0040
 #define CREAD  0x0080
+#define PARENB 0x0100
+#define PARODD 0x0200
+#define HUPCL  0x0400
 #define CLOCAL 0x0800
 /* c_cc indices (Linux c_cc layout; the few values already used by the kernel
  * ABI — VINTR/VEOF/VTIME/VMIN — match it, so the rest follow the same table). */
@@ -83,6 +89,11 @@ struct termios {
 #define TCIFLUSH  0
 #define TCOFLUSH  1
 #define TCIOFLUSH 2
+/* tcflow actions (POSIX; stubbed in newlib_syscalls / stubs as needed) */
+#define TCOOFF 0
+#define TCOON  1
+#define TCIOFF 2
+#define TCION  3
 
 
 /* Baud-rate constants (values arbitrary for our tty; needed to compile). */
