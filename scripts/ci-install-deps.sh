@@ -25,6 +25,7 @@ PACKAGES=(
     curl
     device-tree-compiler   # dtc
     gdisk                    # sgdisk — GPT for make disk / UEFI tests
+    gettext                  # msgfmt — GLib's configure requires it (ci · ports)
     git
     libssl-dev             # openssl headers for native tools
     lld
@@ -53,6 +54,7 @@ REQUIRED_BINS=(
     llvm-objdump
     mcopy
     mformat
+    msgfmt
     openssl
     qemu-system-aarch64
     sgdisk
