@@ -14,6 +14,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -94,6 +96,7 @@ to_shell() {
   await "Password:" 90 || return 1
   send $'swordfish\n'
   await "M12c: shell ready" 120 || return 1
+  await_shell_ready "$LOG" 60 || return 1
   return 0
 }
 

@@ -104,6 +104,7 @@ boot_attempt() {
   await "Welcome to swift-os, user" 120 || return 2
   # If the shell exec is going to fail, it does so right after "shell ready".
   if await "console-login: exec of shell failed" 8; then return 2; fi
+  await_shell_ready "$LOG" 60 || return 2
   send_line 'echo SHELL-OK'
   await "SHELL-OK" 60 || return 2
 

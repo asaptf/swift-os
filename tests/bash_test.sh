@@ -85,6 +85,7 @@ send_line 'swordfish'
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 
 # Launch bash with --norc so it doesn't look for non-existent rc files.
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line '/bin/bash --norc --noprofile'
 
 # 1. Version: bash prints nothing on startup (no MOTD), but $BASH_VERSION is set.
@@ -109,6 +110,7 @@ await 'SH1_PIPE_OK' 15 || drive_fail "pipeline failed"
 # 5. Exit back to the ash shell.
 send_line 'exit'
 await 'M12c: shell ready' 30 || await 'swift-os login:' 20 || true
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line 'exit'
 await 'M12c: session ended' 30 || true
 

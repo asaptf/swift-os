@@ -21,6 +21,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=tests/lib/bootargs.sh
@@ -99,6 +101,7 @@ if await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT"; then
   await "Password:" 90 || fail "no password prompt"
   send $'swordfish\n'
   await "M12c: shell ready" 120 || fail "busybox shell did not launch (large multi-chunk ELF read corrupted)"
+  await_shell_ready "$LOG" 60 || fail "guest shell not reading after login"
   send $'cat /etc/motd\n'
   await "Welcome to swift-os." 30 || fail "shell could not read /etc/motd"
 else

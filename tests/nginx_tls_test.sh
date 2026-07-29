@@ -9,6 +9,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -73,6 +75,7 @@ await "Password:" 90 || fail "no password prompt"
 send 'swordfish'
 await "Welcome to swift-os, root" 120 || fail "root login did not complete"
 
+await_shell_ready "$LOG" 60 || fail "guest shell not reading after login"
 send '/sbin/nginx -c /usr/etc/nginx/nginx-tls.conf &'
 sleep 3
 grep -qiE "\[emerg\]|\[alert\]" "$LOG" && fail "nginx fatal error starting TLS server"

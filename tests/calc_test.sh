@@ -124,6 +124,7 @@ printf 'root\n' >&3
 await "Password:" 90 || drive_fail "password prompt did not appear"
 printf 'swordfish\n' >&3
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 printf '/bin/calc\n' >&3
 await "swift-os calc" 120 || drive_fail "calc did not start"
 await "for commands" 30 || drive_fail "calc prompt did not become ready"

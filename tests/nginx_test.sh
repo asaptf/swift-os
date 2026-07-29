@@ -9,6 +9,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -84,6 +86,7 @@ send 'swordfish'
 await "Welcome to swift-os, root" 120 || fail "root login did not complete"
 
 # Start nginx in the background (config is daemon off / master_process off).
+await_shell_ready "$LOG" 60 || fail "guest shell not reading after login"
 send '/sbin/nginx &'
 sleep 1
 # nginx writes only to its error_log file on success; a startup failure prints to

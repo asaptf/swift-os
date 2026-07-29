@@ -15,6 +15,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=scripts/host-tools.sh
@@ -72,6 +74,7 @@ if wait_for "swift-os login:" 600; then
     send_text $'swordfish\n'
 fi
 if wait_for "M12c: shell ready" 600; then
+    await_shell_ready "$LOG" 60 || { echo "FAIL: guest shell not reading after login" >&2; exit 1; }
     send_text $'echo H3''-RAMDISK-OK\n'
     wait_for "H3-RAMDISK-OK" 240 || true
     send_text $'exit\n'

@@ -98,6 +98,7 @@ send_line 'swordfish'
 await "M12c: shell ready" 120
 
 # Run the synchronous request/reply demo at -smp 4.
+await_shell_ready "$LOG" 60 || { echo "FAIL: guest shell not reading after login" >&2; exit 1; }
 send_line '/bin/ipc-call-test'
 await "ipc-call: bogus token rejected EINVAL" 30
 await "ipc-call: reply 1 correlated" 30

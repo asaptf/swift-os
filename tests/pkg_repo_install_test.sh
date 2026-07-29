@@ -161,6 +161,7 @@ await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line "pkg update http://10.0.2.2:$PORT/expired/aarch64/current"
 await "pkg: catalog expired" 120 || drive_fail "expired catalog was not rejected"
 send_line "pkg update http://10.0.2.2:$PORT/wrongarch/aarch64/current"

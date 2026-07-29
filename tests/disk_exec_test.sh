@@ -8,6 +8,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -85,6 +87,7 @@ printf 'root\n' >&3
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 printf 'swordfish\n' >&3
 await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 printf 'ps\n' >&3
 await "M11d: exec loaded from disk /bin/ps" 60 || drive_fail "/bin/ps was not exec'd from disk"
 await "PID PPID STATE CMD" 60 || drive_fail "ps output missing"

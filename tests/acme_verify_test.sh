@@ -79,6 +79,7 @@ require_await "M7 tty: running; press Ctrl-C" 40; printf '\003' >&3
 require_await "swift-os login:" 40; send_line 'root'
 require_await "Password:" 30; send_line 'swordfish'
 require_await "M12c: shell ready" 60
+await_shell_ready "$LOG" 60 || { echo "FAIL: guest shell not reading after login" >&2; exit 1; }
 
 paste_pem /tmp/ca.pem  "$W/cert.pem"
 paste_pem /tmp/bad.pem "$W/bad.pem"

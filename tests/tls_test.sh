@@ -140,6 +140,7 @@ require_await "M12c: shell ready" 60
 # --insecure: this test exercises the TLS 1.3 record/handshake machinery against a
 # throwaway self-signed cert; certificate verification is covered by
 # tls_truststore_test.sh / tls_verify_test.sh instead.
+await_shell_ready "$LOG" 60 || { echo "FAIL: guest shell not reading after login" >&2; exit 1; }
 send_line "/bin/tlsget --insecure 10.0.2.2 $PORT"
 await "HTTP/1.0 200 ok" 90 || true
 exec 3>&-

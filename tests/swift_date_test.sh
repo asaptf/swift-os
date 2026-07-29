@@ -84,6 +84,7 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line '/bin/date'
 await_regex '^20[0-9][0-9]-[01][0-9]-[0-3][0-9] [0-2][0-9]:[0-5][0-9]:[0-5][0-9] UTC$' 60 || true
 send_line 'exit'

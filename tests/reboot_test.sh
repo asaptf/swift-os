@@ -107,6 +107,7 @@ QP=$!; exec 3<>"$INFIFO"
 
 if to_shell root swordfish 1; then
   await "M12c: shell ready" 120 || fail "A: root shell did not start"
+  await_shell_ready "$LOG" 60 || fail "guest shell not reading after login"
   send_line '/bin/reboot'
   await "power: rebooting now" 60 || fail "A: kernel did not issue PSCI SYSTEM_RESET"
   # The machine must actually reset: the boot flow reaches its prompts a 2nd time.
@@ -122,6 +123,7 @@ fi
 # On the rebooted guest, an unprivileged user must be refused.
 if [[ "$ok" -eq 1 ]] && to_shell user swordfish 2; then
   await "Welcome to swift-os, user" 120 || fail "A: user login did not succeed"
+  await_shell_ready "$LOG" 60 || fail "guest shell not reading after login"
   send_line '/bin/reboot'
   await "reboot: permission denied (need capConsole)" 60 || fail "A: non-console reboot was not refused"
   # And it must NOT have reset a second time.
@@ -144,6 +146,7 @@ QP=$!; exec 3<>"$INFIFO"
 
 if to_shell root swordfish 1; then
   await "M12c: shell ready" 120 || fail "B: root shell did not start"
+  await_shell_ready "$LOG" 60 || fail "guest shell not reading after login"
   send_line '/bin/shutdown'
   await "power: powering off now" 60 || fail "B: kernel did not issue PSCI SYSTEM_OFF"
   # QEMU must exit on its own (SYSTEM_OFF), without our kill.

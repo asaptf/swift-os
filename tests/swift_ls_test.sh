@@ -8,6 +8,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -83,6 +85,7 @@ printf 'root\n' >&3
 await "Password:" 60 || drive_fail "timed out waiting for password prompt"
 printf 'swordfish\n' >&3
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 printf '/bin/ls /etc\n' >&3
 await_regex '^motd$' 20 || drive_fail "plain /bin/ls did not list /etc/motd"
 printf '/bin/ls -l /etc\n' >&3

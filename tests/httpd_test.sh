@@ -124,6 +124,7 @@ send_line 'root'
 await "Password:" 90 || drive_fail "password prompt did not appear"
 send_line 'swordfish'
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line "$httpd_cmd"
 
 listening=0

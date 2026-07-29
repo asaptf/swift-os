@@ -80,6 +80,7 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line '/bin/ncdemo'
 await "NCDEMO-START" 60 || drive_fail "/bin/ncdemo did not start (link/load failure?)"
 # Satisfy the getch() loop with a single 'q' (no newline — raw mode).

@@ -93,6 +93,7 @@ send_line 'swordfish'
 await "Welcome to swift-os, user" 120 || drive_fail "login as user did not succeed"
 
 # Baseline: the login shell is the unprivileged user (principal 2).
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line '/bin/id'
 await "principal=2(user) session=2 caps=0xe" 60 || drive_fail "user shell did not report the user context"
 

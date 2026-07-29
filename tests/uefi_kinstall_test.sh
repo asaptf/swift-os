@@ -31,6 +31,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=scripts/host-tools.sh
@@ -96,6 +98,7 @@ to_shell() {
   send $'\003'; await "swift-os login:" 120 || return 1
   send $'root\n'; await "Password:" 90 || return 1
   send $'swordfish\n'; await "M12c: shell ready" 150 || return 1
+  await_shell_ready "$LOG" 60 || return 1
   return 0
 }
 

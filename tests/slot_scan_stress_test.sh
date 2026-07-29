@@ -110,6 +110,7 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line '/bin/slotscanstress'
 await "M11d: exec loaded from disk /bin/slotscanstress" 60 || drive_fail "slotscanstress did not execute"
 await "SLOTSCAN-OK scan+shrink concurrency completed" 180 || drive_fail "slotscanstress did not finish"
