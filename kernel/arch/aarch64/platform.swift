@@ -107,6 +107,14 @@ var platform = Platform()
 // corrupted. Exposed to userland via the recovery_mode syscall.
 var recoveryMode = false
 
+// True when the kernel command line (FDT /chosen/bootargs) contains
+// `selftest=1`. Default is false: skip the heavy pre-login milestone demos
+// (M4.5/M6/M8*/M12a/S5b–S5g placement stress/SMPRACE/…). The M7 tty demo
+// always runs on the serial path so existing harnesses can synchronise on it.
+// Opt-in restores the full bring-up sequence for the few gates that assert
+// those markers.
+var bootSelftest = false
+
 // V2c: the pinned root /data volume UUID from the kernel command line
 // (`datafs.root=<hex>`), or unset. When set, `vfsMountDataFs` selects the /data
 // disk by this UUID (the single pinned identity) and, on first boot, formats a
@@ -194,6 +202,13 @@ func platformInit(_ dtbPhys: UInt, _ acpiRsdp: UInt) {
     platform.dtbBase = parsedDtb
     recoveryMode = fdtRecoveryRequested
     if recoveryMode { uartPuts("K4 recovery: kernel command line requested recovery mode\n") }
+
+    bootSelftest = fdtSelftestRequested
+    if bootSelftest {
+        uartPuts("boot: selftest=1: milestone self-tests enabled\n")
+    } else {
+        uartPuts("boot: selftest skipped (selftest=1 to enable)\n")
+    }
 
     datafsRootUuidSet = fdtDatafsRootSet
     datafsRootUuidLo = fdtDatafsRootLo

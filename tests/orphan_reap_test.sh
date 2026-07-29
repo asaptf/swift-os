@@ -16,6 +16,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/bootargs.sh
+source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
@@ -54,12 +56,15 @@ run_once() {  # run_once <smp_cpus>
   # `make run` / the SMP test harnesses, which always load a matching DTB).
   local dtb="$SINGLE_DTB"
   [[ "$cpus" != "1" ]] && dtb="$SMP_DTB"
+  local selftest_dtb
+  selftest_dtb="$(mktemp -t swiftos-orphan-selftest.XXXXXX.dtb)"
+  bake_selftest_dtb "$dtb" "$selftest_dtb" || { rm -f "$selftest_dtb" "$log" "$pidfile"; return 2; }
 
   local qemu_args=("$QEMU" -M virt -cpu cortex-a72 -smp "$cpus" -m 256M
     -nographic -no-reboot -pidfile "$pidfile"
     -global virtio-mmio.force-legacy=false)
-  if [[ -f "$dtb" ]]; then
-    qemu_args+=(-device "loader,file=$dtb,addr=$DTB_ADDR,force-raw=on")
+  if [[ -f "$selftest_dtb" ]]; then
+    qemu_args+=(-device "loader,file=$selftest_dtb,addr=$DTB_ADDR,force-raw=on")
   fi
   qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
     -device virtio-blk-device,drive=swosbase
@@ -79,6 +84,7 @@ run_once() {  # run_once <smp_cpus>
   done
 
   stop_qemu
+  rm -f "$selftest_dtb"
   if [[ "$rc" -eq 0 ]]; then
     echo "PASS: orphan-reap self-test OK under -smp $cpus"
     grep -F "orphan-reap: slots base=" "$log" | sed 's/\r//' | tail -1 >&2 || true

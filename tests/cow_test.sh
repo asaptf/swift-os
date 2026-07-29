@@ -2,22 +2,25 @@
 #!/usr/bin/env bash
 # cow_test.sh — COW fork acceptance.
 #
-# Boots the kernel, lets the built-in reclaim demo run, then logs in and drives
-# ash through a forked subshell. The child mutates a shell variable, then the
-# parent proves its copy is unchanged before mutating its own copy;
-# /bin/forkdemo adds the existing static-data marker check and waitpid path. The
-# boot reclaim line guards against leaked or double-freed frames across repeated
-# fork/exec/reap.
+# Boots the kernel with selftest=1 (so the built-in reclaim demo runs), then
+# logs in and drives ash through a forked subshell. The child mutates a shell
+# variable, then the parent proves its copy is unchanged before mutating its own
+# copy; /bin/forkdemo adds the existing static-data marker check and waitpid
+# path. The boot reclaim line guards against leaked or double-freed frames
+# across repeated fork/exec/reap.
 
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+# shellcheck source=tests/lib/bootargs.sh
+source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
+[[ -f "$DTB" ]] || { echo "FAIL: $DTB missing (make build/virt.dtb)" >&2; exit 2; }
 
 DISK="$ROOT/build/base.img"
 if [[ ! -f "$DISK" ]]; then
@@ -25,6 +28,7 @@ if [[ ! -f "$DISK" ]]; then
 fi
 
 LOG="$(mktemp -t swiftos-cow.XXXXXX)"
+SELFTEST_DTB="$(mktemp -t swiftos-cow-selftest.XXXXXX.dtb)"
 PIDFILE="$(mktemp -t swiftos-cow-pid.XXXXXX)"
 INFIFO="$(mktemp -u -t swiftos-cow-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
@@ -45,14 +49,13 @@ stop_qemu() {
 cleanup() {
   stop_qemu
   exec 3>&- 2>/dev/null || true
-  rm -f "$LOG" "$PIDFILE" "$INFIFO"
+  rm -f "$LOG" "$PIDFILE" "$INFIFO" "$SELFTEST_DTB"
 }
 trap cleanup EXIT
 
-dtb_args=()
-if [[ -f "$DTB" ]]; then
-  dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
-fi
+# reclaim OK is emitted only by runReclaimDemo under selftest=1.
+bake_selftest_dtb "$DTB" "$SELFTEST_DTB" || exit 2
+dtb_args=(-device "loader,file=$SELFTEST_DTB,addr=0x4FF00000,force-raw=on")
 
 blk_args=(-global virtio-mmio.force-legacy=false \
           -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \

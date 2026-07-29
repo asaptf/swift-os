@@ -172,31 +172,18 @@ check "[I] smp: S4d OK: package-store lock boundary ready"
 check "[I] smp: S4b OK: VFS lock boundary ready"
 check "[I] smp: S4c OK: kernel heap lock boundary ready"
 check "[I] smp: S4e OK: network lock boundary ready"
-check "[I] sched: M4.5 sched: real context switch OK"
-check "[I] smp: S2c OK: no secondary kernel scheduler execution"
-if (( SMP_CPU_COUNT > 1 )); then
-    check "[I] smp: S2h OK: coproc pair dispatched across scheduler CPUs"
-else
-    check "[I] smp: S2h OK: coproc pair dispatch CPU0 fallback"
-fi
-check "[I] smp: S2h OK: process scheduler quiesced after multi-CPU dispatch"
-check "[I] smp: S2h OK: secondary EL0 gate closed after restricted dispatch"
-check "[I] smp: S3a OK: address-space CPU masks matched dispatch CPUs"
-check "[I] smp: S3b OK: IPI delivery stayed scheduler-safe"
-check "[I] smp: S3c OK: TLB shootdown path stayed scheduler-safe"
-check "[I] smp: S3d OK: address-space TLB flush matched dispatch CPUs"
-check "[I] smp: S4a OK: PMM lock boundary stayed balanced"
-check "[I] smp: S4b OK: VFS lock boundary stayed balanced"
-check "[I] smp: S4c OK: kernel heap lock boundary stayed balanced"
-check "[I] smp: S4d OK: package-store lock boundary stayed balanced"
-check "[I] smp: S4e OK: network lock boundary stayed balanced"
+# Default boot skips the heavy pre-login demos (selftest=1 restores them on the
+# -kernel path; firmware FDT has no bootargs). Still require M7 + multi-CPU EL0
+# enable + userland.
+check "boot: selftest skipped (selftest=1 to enable)"
+check "[I] smp: S5g OK: default multi-CPU EL0 placement enabled"
 check "M12c: shell ready"                  # busybox came up
 check "M10-UEFI-OK"                           # echo applet
 check "readme.txt"                            # ls applet
 grep -c "Welcome to swift-os." "$LOG" | grep -qvx 0 || { echo "FAIL: cat applet" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-    echo "PASS: UEFI firmware booted swift-os to busybox from $UEFI_BOOT with -smp $SMP_CPU_COUNT (M10/S1/S2a/S2b/S2c/S2d/S2e/S2f/S2g/S2h/S3a/S3b/S3c/S3d/S4a-S4e acceptance)"
+    echo "PASS: UEFI firmware booted swift-os to busybox from $UEFI_BOOT with -smp $SMP_CPU_COUNT (M10/S0–S5a readiness + M7/login; demos opt-in via selftest=1)"
     exit 0
 fi
 echo "--- serial log ---" >&2

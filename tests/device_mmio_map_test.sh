@@ -21,6 +21,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+# shellcheck source=tests/lib/bootargs.sh
+source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
 SMP_CPU_COUNT="${SMP_CPUS:-1}"
 if [[ "$SMP_CPU_COUNT" -gt 1 ]]; then
@@ -37,6 +39,7 @@ if [[ ! -f "$DISK" ]]; then
 fi
 
 LOG="$(mktemp -t swiftos-devmmap.XXXXXX)"
+SELFTEST_DTB=""
 PIDFILE="$(mktemp -t swiftos-devmmap-pid.XXXXXX)"
 INFIFO="$(mktemp -u -t swiftos-devmmap-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
@@ -47,7 +50,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "${SELFTEST_DTB:-}" "$INFIFO"' EXIT
 
 await() {  # await MARKER [MAXSEC]
   local marker="$1" max="${2:-30}" n=0
@@ -78,8 +81,10 @@ send_line() {
 qemu_args=("$QEMU" -M virt -cpu cortex-a72 -smp "$SMP_CPU_COUNT" -m 256M -nographic -no-reboot
   -pidfile "$PIDFILE"
   -global virtio-mmio.force-legacy=false)
+SELFTEST_DTB="$(mktemp -t swiftos-selftest.XXXXXX.dtb)"
+bake_selftest_dtb "$DTB" "${SELFTEST_DTB:-}" || exit 2
 if [[ -f "$DTB" ]]; then
-  qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+  qemu_args+=(-device "loader,file=${SELFTEST_DTB:-},addr=0x4FF00000,force-raw=on")
 fi
 qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
   -device virtio-blk-device,drive=swosbase

@@ -9,6 +9,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+# shellcheck source=tests/lib/bootargs.sh
+source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
@@ -41,6 +43,7 @@ if [[ ! -f "$DISK" || "$ROOT/userland/s4stress.c" -nt "$DISK" || "$ROOT/Makefile
 fi
 
 LOG="$(mktemp -t swiftos-s4f.XXXXXX)"
+SELFTEST_DTB=""
 PIDFILE="$(mktemp -t swiftos-s4f-pid.XXXXXX)"
 INFIFO="$(mktemp -u -t swiftos-s4f-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
@@ -52,7 +55,7 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO"' EXIT
+trap 'stop_qemu; exec 3>&- 2>/dev/null || true; rm -f "$LOG" "$PIDFILE" "$INFIFO" "${SELFTEST_DTB:-}"' EXIT
 
 await() {
   local marker="$1" max="${2:-30}" n=0
@@ -95,10 +98,14 @@ elif [[ ! -f "$DTB" ]]; then
   exit 2
 fi
 
+# Opt-in: asserts boot-time S4a–S4e "stayed balanced" markers from selftests.
+SELFTEST_DTB="$(mktemp -t swiftos-s4f-selftest.XXXXXX.dtb)"
+bake_selftest_dtb "$DTB" "$SELFTEST_DTB" || exit 2
+
 "$QEMU" -M virt -cpu cortex-a72 -smp "$SMP_CPU_COUNT" -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false \
-  -device "loader,file=$DTB,addr=0x4FF00000,force-raw=on" \
+  -device "loader,file=$SELFTEST_DTB,addr=0x4FF00000,force-raw=on" \
   -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
   -device virtio-blk-device,drive=swosbase \
   -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &

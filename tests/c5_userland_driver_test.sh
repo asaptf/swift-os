@@ -3,8 +3,9 @@
 # c5_userland_driver_test.sh - C5i: the virtio-input driver runs entirely in
 # userland; the kernel no longer owns the device.
 #
-# Boots the base image with a virtio-input window present (-device
-# virtio-keyboard-device) under -smp 4. Asserts:
+# Boots the base image with selftest=1 (so the LA1 supervisor demo runs) and a
+# virtio-input window present (-device virtio-keyboard-device) under -smp 4.
+# Asserts:
 #   * the kernel SKIPPED its in-kernel polled virtio-input driver (the userland
 #     driver service owns the device via the mappable MMIO grant);
 #   * the userland driver (/bin/svc-input) negotiated virtio features and brought
@@ -17,6 +18,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/bootargs.sh
+source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
 SMP_CPU_COUNT="${SMP_CPUS:-4}"
 if [[ "$SMP_CPU_COUNT" -gt 1 ]]; then
@@ -30,8 +33,10 @@ TIMEOUT="${TIMEOUT:-120}"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 [[ -f "$DISK" ]] || { echo "FAIL: $DISK missing (make base-image)" >&2; exit 2; }
+[[ -f "$DTB" ]] || { echo "FAIL: $DTB missing (make build)" >&2; exit 2; }
 
 LOG="$(mktemp -t swiftos-c5i.XXXXXX)"
+SELFTEST_DTB="$(mktemp -t swiftos-c5i-selftest.XXXXXX.dtb)"
 PIDFILE="$(mktemp -t swiftos-c5i-pid.XXXXXX)"
 QP=""
 stop_qemu() {
@@ -48,14 +53,15 @@ stop_qemu() {
   fi
   [[ -n "$QP" ]] && wait "$QP" 2>/dev/null || true
 }
-trap 'stop_qemu; rm -f "$LOG" "$PIDFILE"' EXIT
+trap 'stop_qemu; rm -f "$LOG" "$PIDFILE" "$SELFTEST_DTB"' EXIT
+
+# LA1 / C5i markers come from runUserlandServiceDemo, which only runs under selftest=1.
+bake_selftest_dtb "$DTB" "$SELFTEST_DTB" || exit 2
 
 qemu_args=("$QEMU" -M virt -cpu cortex-a72 -smp "$SMP_CPU_COUNT" -m 256M
   -nographic -no-reboot -pidfile "$PIDFILE"
   -global virtio-mmio.force-legacy=false)
-if [[ -f "$DTB" ]]; then
-  qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
-fi
+qemu_args+=(-device "loader,file=$SELFTEST_DTB,addr=0x4FF00000,force-raw=on")
 qemu_args+=(-drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"
   -device virtio-blk-device,drive=swosbase
   -device virtio-keyboard-device

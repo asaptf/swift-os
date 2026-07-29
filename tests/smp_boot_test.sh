@@ -9,6 +9,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/bootargs.sh
+source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
@@ -121,6 +123,7 @@ if [[ ! -f "$DISK" ]]; then
 fi
 
 LOG="$(mktemp -t swiftos-smp-boot.XXXXXX)"
+SELFTEST_DTB="$(mktemp -t swiftos-smp-boot-selftest.XXXXXX.dtb)"
 QEMU_PID=""
 
 stop_qemu() {
@@ -138,7 +141,7 @@ stop_qemu() {
 
 cleanup() {
   stop_qemu
-  rm -f "$LOG"
+  rm -f "$LOG" "$SELFTEST_DTB"
 }
 trap cleanup EXIT
 
@@ -153,7 +156,9 @@ elif [[ ! -f "$DTB" ]]; then
   exit 2
 fi
 
-dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
+# Opt-in: this harness asserts S5b–S5g / M4.5 / M8d demo markers.
+bake_selftest_dtb "$DTB" "$SELFTEST_DTB" || exit 2
+dtb_args=(-device "loader,file=$SELFTEST_DTB,addr=0x4FF00000,force-raw=on")
 
 blk_args=(-global virtio-mmio.force-legacy=false
           -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on"

@@ -31,6 +31,8 @@ manifest entries left behind after globals move or disappear.
 - `kernel/arch/aarch64/fdt.swift:fdtDatafsRootLo`
 - `kernel/arch/aarch64/fdt.swift:fdtDatafsRootSet`
 - `kernel/arch/aarch64/fdt.swift:fdtRecoveryRequested`
+- `kernel/arch/aarch64/fdt.swift:fdtSelftestRequested`
+- `kernel/arch/aarch64/platform.swift:bootSelftest`
 - `kernel/arch/aarch64/platform.swift:datafsRootUuidHi`
 - `kernel/arch/aarch64/platform.swift:datafsRootUuidLo`
 - `kernel/arch/aarch64/platform.swift:datafsRootUuidSet`

@@ -58,6 +58,9 @@ send() { printf '%s\n' "$1" >&3; sleep 0.2; }
 
 fail() {
   echo "FAIL: $1" >&2
+  # Probe values print well before the failure, so a plain tail loses them.
+  echo "--- probe values ---" >&2
+  sed 's/\r//' "$CURLOG" 2>/dev/null | grep -E '^[A-Z0-9-]+(-rc)?=' >&2 || true
   echo "--- serial tail ---" >&2
   sed 's/\r//' "$CURLOG" 2>/dev/null | tail -40 >&2 || true
   exit 1
@@ -99,9 +102,59 @@ login
 # Probe /data writability before involving SQLite. "attempt to write a readonly
 # database" is ambiguous on its own — it looks the same whether the datafs mount
 # is missing (so /data resolves to the read-only base image), the volume is full,
-# or SQLite itself cannot create its journal. This separates them in the log.
+# or SQLite itself cannot create its journal / lock / truncate. Each probe prints
+# its own greppable rc= line so a CI failure names the missing capability without
+# another round trip. Verdicts below are unchanged: only SQLITE-WROTE must be 0.
 send 'touch /data/.wprobe; echo DATA-WPROBE-rc=$?'
 await "DATA-WPROBE-rc=0" 30 || fail "/data is not writable before sqlite (mount or permissions)"
+# SQLite's "readonly database" is set when the pager opens RO: unixOpen tries
+# open(O_RDWR[|O_CREAT]), and on failure silently falls back to O_RDONLY.
+# touch is O_WRONLY|O_CREAT, so it never exercises that RDWR path.
+#
+# access(W_OK) note: the image has no test(1)/[ applet (CONFIG_TEST and
+# CONFIG_ASH_TEST both off), so `test -w` is not available. SQLite's own
+# xAccess(READWRITE) → access(W_OK|R_OK) is only used for PRAGMA
+# temp_store_directory (not for opening the main DB). Our libc access() is
+# also a mode-ignoring stat stub (userland/compat/stubs.c). ACCESS-W-DIR
+# therefore goes through SQLite's real xAccess path; ACCESS-W-FILE uses
+# ls/stat on the file (same backend as the access stub). OPEN-RDWR-* is the
+# actual RO-fallback path. Greppable only; verdicts below are unchanged.
+send "sqlite3 :memory: \"pragma temp_store_directory='/data';\""
+send 'echo ACCESS-W-DIR-rc=$?'
+await "ACCESS-W-DIR-rc=" 30 || true   # diagnostic only: never gate the verdict
+send 'ls /data/.wprobe; echo ACCESS-W-FILE-rc=$?'
+await "ACCESS-W-FILE-rc=" 30 || true   # diagnostic only: never gate the verdict
+# Await the expected VALUE, not just the prefix. These two are the RO-fallback
+# path SQLite actually takes, so a non-zero rc is the answer we are hunting —
+# it has to fail the test by name here. Waiting only for the prefix hid the
+# values, because fail() dumps just the serial tail and by then they had
+# scrolled away.
+send 'exec 9<> /data/.wprobe; echo OPEN-RDWR-EXISTING-rc=$?; exec 9>&-'
+await "OPEN-RDWR-EXISTING-rc=0" 30 || fail "open(O_RDWR) on an existing /data file failed — SQLite's pager falls back to read-only here"
+send 'rm -f /data/.rdwrnew; exec 9<> /data/.rdwrnew; echo OPEN-RDWR-CREATE-rc=$?; exec 9>&-'
+await "OPEN-RDWR-CREATE-rc=0" 30 || fail "open(O_RDWR|O_CREAT) on a new /data file failed — this is how SQLite creates the database"
+send 'echo LS-DATA=$(ls -ld /data)'
+await "LS-DATA=" 30 || true   # diagnostic only: never gate the verdict
+send 'echo LS-FILE=$(ls -l /data/.wprobe)'
+await "LS-FILE=" 30 || true   # diagnostic only: never gate the verdict
+# Exact rollback-journal name SQLite will open next to /data/app.db.
+send 'touch /data/app.db-journal; echo JOURNAL-CREATE-rc=$?'
+await "JOURNAL-CREATE-rc=" 30 || true   # diagnostic only: never gate the verdict
+send 'rm -f /data/app.db-journal'
+# Write with journalling disabled — if this works, the failure is not generic
+# file create/write; it is something the default DELETE journal path needs.
+send "sqlite3 /data/.nojprobe.db \"pragma journal_mode=off; create table t(x); insert into t values(1);\""
+send 'echo SQLITE-NOJRNL-rc=$?'
+await "SQLITE-NOJRNL-rc=" 60 || true   # diagnostic only: never gate the verdict
+# ftruncate path: write non-empty, then O_TRUNC to zero (same datafsTruncate
+# backend as SYS_FTRUNCATE for length 0 on datafs).
+send 'printf xxxx > /data/.truncprobe; : > /data/.truncprobe; echo FTRUNCATE-rc=$?'
+await "FTRUNCATE-rc=" 30 || true   # diagnostic only: never gate the verdict
+# fcntl advisory lock: BEGIN EXCLUSIVE with journal_mode=off still takes a
+# POSIX lock via F_SETLK without needing the rollback journal file.
+send "sqlite3 /data/.lockprobe.db \"pragma journal_mode=off; begin exclusive; create table t(x); insert into t values(1); commit;\""
+send 'echo FCNTL-LOCK-rc=$?'
+await "FCNTL-LOCK-rc=" 60 || true   # diagnostic only: never gate the verdict
 send "sqlite3 /data/app.db \"create table t(x text); insert into t values('$MARK');\""
 send 'echo SQLITE-WROTE-rc=$?'
 await "SQLITE-WROTE-rc=0" 60 || fail "sqlite3 create/insert did not exit 0 (boot 1)"

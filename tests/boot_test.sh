@@ -13,6 +13,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+# shellcheck source=tests/lib/bootargs.sh
+source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
@@ -204,6 +206,7 @@ if [[ ! -f "$KERNEL" ]]; then
 fi
 
 LOG="$(mktemp -t swiftos-boot.XXXXXX)"
+SELFTEST_DTB="$(mktemp -t swiftos-boot-selftest.XXXXXX.dtb)"
 QEMU_PID=""
 
 stop_qemu() {
@@ -221,7 +224,7 @@ stop_qemu() {
 
 cleanup() {
     stop_qemu
-    rm -f "$LOG"
+    rm -f "$LOG" "$SELFTEST_DTB"
 }
 trap cleanup EXIT
 
@@ -232,9 +235,9 @@ if [[ ! -f "$DTB" ]]; then
     "$QEMU" -M "virt,dumpdtb=$tmp_dtb" -cpu cortex-a72 -m 256M -nographic >/dev/null 2>&1
     mv "$tmp_dtb" "$DTB"
 fi
-if [[ -f "$DTB" ]]; then
-    qemu_args+=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
-fi
+# Opt-in to the full pre-login milestone sequence (default boot skips it).
+bake_selftest_dtb "$DTB" "$SELFTEST_DTB" || exit 2
+qemu_args+=(-device "loader,file=$SELFTEST_DTB,addr=0x4FF00000,force-raw=on")
 
 # Attach the packed base image (modern virtio-mmio transport) so /bin/* and the
 # read-only base are served from disk rather than the embedded blob.
