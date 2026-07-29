@@ -115,6 +115,7 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line '/bin/satstress'
 await "M11d: exec loaded from disk /bin/satstress" 60 || drive_fail "satstress did not execute"
 await "SAT-OK fixed-size pool saturation completed" 120 || drive_fail "satstress did not finish"

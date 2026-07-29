@@ -103,6 +103,7 @@ await "Password:" 90 || drive_fail "password prompt did not appear"
 send_line 'swordfish'
 await "M12c: shell ready" 180 || drive_fail "root shell did not start"
 
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line '/bin/llm'
 await "LM2: matmul pool workers=" 90 || drive_fail "LM2 pool banner missing"
 await "llm: done" 360 || drive_fail "llm did not finish generating"

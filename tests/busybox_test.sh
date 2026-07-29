@@ -111,6 +111,7 @@ await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
 await "M12c: shell ready" 30 || drive_fail "busybox ash did not start"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line 'echo M8-BUSYBOX-OK'
 await_line "M8-BUSYBOX-OK" 20 || drive_fail "echo applet did not respond"
 send_line 'ls /'

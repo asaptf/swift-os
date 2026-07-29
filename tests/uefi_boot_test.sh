@@ -10,6 +10,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=scripts/host-tools.sh
@@ -105,6 +107,7 @@ if wait_for "swift-os login:" 480; then
     send_text $'swordfish\n'
 fi
 if wait_for "M12c: shell ready" 480; then
+    await_shell_ready "$LOG" 60 || { echo "FAIL: guest shell not reading after login" >&2; exit 1; }
     send_text $'echo M10\'\'-UEFI-OK\n'
     wait_for "M10-UEFI-OK" 240 || true
     send_text $'ls /\n'

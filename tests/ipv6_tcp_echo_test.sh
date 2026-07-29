@@ -9,6 +9,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -129,7 +131,7 @@ await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" && printf 'tty-line\
 await "M7 tty: running; press Ctrl-C"  20 && printf '\003'           >&3
 await "swift-os login:"                20 && printf 'root\n'         >&3
 await "Password:"                      15 && printf 'swordfish\n'    >&3
-await "Welcome to swift-os, root"      15 && printf '/bin/tcpecho\n' >&3
+await "Welcome to swift-os, root"      15 && await_shell_ready "$LOG" 60 && printf '/bin/tcpecho\n' >&3
 
 # Wait for guest listener (the one-shot server prints just before accept()).
 listening=0

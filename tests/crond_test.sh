@@ -24,6 +24,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -119,6 +121,7 @@ await "Password:" 90                       || fail "no password prompt"
 send 'swordfish'
 await "Welcome to swift-os, root" 120     || fail "root login did not complete"
 await "M12c: shell ready" 120          || fail "root shell did not start"
+await_shell_ready "$LOG" 60 || fail "guest shell not reading after login"
 
 # CR3 auto-start: the system crond was started by swos-init at boot (it is in the
 # default /etc/swos/services) and parsed the all-comments /etc/crontab to zero

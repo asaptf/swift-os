@@ -85,6 +85,7 @@ send_line 'swordfish'
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 
 # Launch zsh; --no-rcs skips all startup files (none exist anyway).
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line '/bin/zsh --no-rcs'
 
 # 1. Version.
@@ -107,6 +108,7 @@ await 'SH2_FUNC_OK' 15 || drive_fail "function definition/call failed"
 # 5. Exit.
 send_line 'exit'
 await 'M12c: shell ready' 30 || await 'swift-os login:' 20 || true
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line 'exit'
 await 'M12c: session ended' 30 || true
 

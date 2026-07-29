@@ -77,6 +77,7 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line '/bin/mc'
 
 # No skin file is shipped, so MC draws a one-time startup notice ("Default skin
@@ -97,6 +98,7 @@ printf '\0330' >&3
 sleep 0.5
 printf '\r' >&3
 await "M12c: shell ready" 30 || await "swift-os login:" 20 || true
+await_shell_ready "$LOG" 60 || { echo "FAIL: guest shell not reading after login" >&2; exit 1; }
 send_line 'exit'
 await "M12c: session ended" 30 || true
 

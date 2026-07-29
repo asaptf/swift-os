@@ -78,6 +78,7 @@ send_line 'guest'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'guest'
 await "session: principal=3 session=3 caps=2" 120 || drive_fail "guest did not log in with the restricted context"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line 'echo GUEST-ECHO-OK'
 await "GUEST-ECHO-OK" 60 || drive_fail "echo builtin should still work"
 send_line 'cat /etc/motd'

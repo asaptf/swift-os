@@ -95,6 +95,7 @@ await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
 await "M12c: shell ready" 60 || drive_fail "root shell did not start"
 
 # Run the controller self-test (P-256/X25519-heavy under TCG ⇒ generous timeout).
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line '/bin/sctld'
 await "SC2: SELFTEST PASS" 240 || drive_fail "/bin/sctld self-test did not pass"
 

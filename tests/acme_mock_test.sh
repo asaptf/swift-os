@@ -112,6 +112,7 @@ require_await "Welcome to swift-os, root" 40
 require_await "M12c: shell ready" 60
 # --insecure: this test targets a self-signed mock; cert verification (now on by
 # default) is covered by acme_verify_test.sh instead.
+await_shell_ready "$LOG" 60 || { echo "FAIL: guest shell not reading after login" >&2; exit 1; }
 send_line "/bin/acme 10.0.2.2 $PORT /directory $DOMAIN /tmp/www /tmp/acmestate --insecure"
 await "acme: certificate obtained" 120 || true
 exec 3>&-

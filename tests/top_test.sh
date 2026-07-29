@@ -125,6 +125,7 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line '/bin/top -b -n 2 -d 1'
 await_regex_count '^top - up ' 2 40 || drive_fail "top did not render two frames"
 send_line 'echo TOP-SHELL-ALIVE'

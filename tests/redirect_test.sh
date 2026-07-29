@@ -77,7 +77,7 @@ await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" && send_line 'tty-li
 await "M7 tty: running; press Ctrl-C" 20 && printf '\003' >&3
 await "swift-os login:" 20 && send_line 'root'
 await "Password:" 15 && send_line 'swordfish'
-await "Welcome to swift-os, root" 15 && send_line 'echo hello-redir > /tmp/r'
+await "Welcome to swift-os, root" 15 && await_shell_ready "$LOG" 60 && send_line 'echo hello-redir > /tmp/r'
 await "echo hello-redir > /tmp/r" 10 && send_line 'cat /tmp/r'
 await_line "hello-redir" 15 && send_line 'echo world-append >> /tmp/r'
 await "echo world-append >> /tmp/r" 10 && send_line 'cat /tmp/r'

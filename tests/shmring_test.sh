@@ -98,6 +98,7 @@ send_line 'swordfish'
 await "M12c: shell ready" 120
 
 # Run the full-duplex shared-memory ring round-trip at -smp 4.
+await_shell_ready "$LOG" 60 || { echo "FAIL: guest shell not reading after login" >&2; exit 1; }
 send_line '/bin/shmringprobe'
 await "SHMRING OK:" 60
 

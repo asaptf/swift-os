@@ -89,6 +89,7 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 probe_host_start="$(date +%s)"
 send_line '/bin/sleepprobe'
 await_regex 'SLEEP_DELTA=[0-9]+' 120 || drive_fail "/bin/sleepprobe printed no SLEEP_DELTA line"

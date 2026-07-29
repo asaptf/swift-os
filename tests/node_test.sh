@@ -74,6 +74,7 @@ send_line 'swordfish'
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
 
 # 0) runtime entropy probe: does SYS_RANDOM-backed /dev/urandom yield bytes?
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line 'head -c 8 /dev/urandom | od -An -tx1'
 sleep 1
 

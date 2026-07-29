@@ -55,6 +55,7 @@ await "Password:" 90 || { echo "no pw"; exit 2; }
 send_line 'swordfish'
 await "M12c: shell ready" 120 || { echo "no shell"; exit 2; }
 
+await_shell_ready "$LOG" 60 || { echo "FAIL: guest shell not reading after login" >&2; exit 1; }
 send_line '/bin/node -e "console.log(6*7)"'
 if await "42" 25; then
   echo "RESULT: PASS (node printed 42)"

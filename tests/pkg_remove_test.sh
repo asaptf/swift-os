@@ -109,6 +109,7 @@ login_root() {
   send_line 'swordfish'
   await "Welcome to swift-os, root" 120 || drive_fail "root login did not complete"
   await "M12c: shell ready" 120 || drive_fail "root shell did not start"
+  await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 }
 
 start_qemu "$LOG1"

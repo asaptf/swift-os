@@ -10,6 +10,8 @@
 
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -95,6 +97,7 @@ login() {
   await "Password:" 90 || fail "no password prompt"
   send 'swordfish'
   await "Welcome to swift-os, root" 120 || fail "root login did not complete"
+  await_shell_ready "$CURLOG" 60 || fail "guest shell not reading after login"
 }
 
 curl_marker() {  # returns 0 if the page with MARK is fetched within the window

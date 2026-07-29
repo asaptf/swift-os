@@ -98,6 +98,7 @@ await "M12c: shell ready" 120
 
 # Run the blocking IPC demo at -smp 4. QW2-RECV-PARKED must appear first
 # (child reaches recv before the parent sends), then the recv/EOF results.
+await_shell_ready "$LOG" 60 || { echo "FAIL: guest shell not reading after login" >&2; exit 1; }
 send_line '/bin/qw2-ipc'
 await "QW2-RECV-PARKED" 30
 await "QW2-RECV-OK 5" 30

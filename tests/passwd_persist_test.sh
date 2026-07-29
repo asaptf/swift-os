@@ -70,6 +70,7 @@ phase1_once() {
   send_line 'swordfish'
   await "Welcome to swift-os, user" 120 || { cleanup_boot; return 2; }
   if await "console-login: exec of shell failed" 8; then cleanup_boot; return 2; fi
+  await_shell_ready "$LOG" 60 || { cleanup_boot; return 2; }
   send_line 'echo SHELL-OK'
   await "SHELL-OK" 60 || { cleanup_boot; return 2; }
   send_line "/bin/passwd -i $ITERS"
@@ -102,6 +103,7 @@ phase2_once() {
   send_line 's3cret'
   await "Welcome to swift-os, user" 120 || { echo "FAIL: new password did NOT work after reboot" >&2; cleanup_boot; return 1; }
   if await "console-login: exec of shell failed" 8; then cleanup_boot; return 2; fi
+  await_shell_ready "$LOG" 60 || { cleanup_boot; return 2; }
   send_line 'echo SHELL-OK'
   await "SHELL-OK" 60 || { cleanup_boot; return 2; }
   cleanup_boot

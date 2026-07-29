@@ -92,6 +92,7 @@ send_line 'user'
 await_count "Password:" 2 90 || drive_fail "timed out waiting for second password prompt"
 send_line 'swordfish'
 await "Welcome to swift-os, user" 120 || drive_fail "authentication did not succeed"
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line 'echo LOGGED-IN-SHELL'
 await "LOGGED-IN-SHELL" 60 || drive_fail "user shell did not start"
 send_line 'exit'

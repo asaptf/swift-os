@@ -133,6 +133,7 @@ send_line 'swordfish'
 await "Welcome to swift-os, root" 60 || drive_fail "root login did not complete"
 await "M12c: shell ready" 60 || drive_fail "root shell did not start"
 # Hostname + port + hermetic DNS at 10.0.2.2:5354 — no literal connect target IP.
+await_shell_ready "$LOG" 60 || drive_fail "guest shell not reading after login"
 send_line "/bin/tcpget ${HOSTNAME} ${PORT} 10.0.2.2 ${DNSPORT}"
 await "srv-reply" 90 || true
 stop_all
