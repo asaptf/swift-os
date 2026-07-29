@@ -73,9 +73,17 @@ boot_once "UEFI: kernel slot A boot attempt 0x0000000000000001" || fail "boot 1:
 boot_once "UEFI: kernel slot A boot attempt 0x0000000000000002" || fail "boot 2: attempt 2 not persisted"
 boot_once "UEFI: kernel slot A boot attempt 0x0000000000000003" || fail "boot 3: attempt 3 not persisted"
 # Boot 4: slot A unconfirmed + attempts exhausted -> roll back to slot B.
-boot_once "UEFI: booted kernel slot B" || fail "boot 4: loader did not roll back to slot B"
+#
+# Wait for the *kernel's* first line, not the loader's handoff line. boot_once
+# kills QEMU as soon as its marker appears, so awaiting "booted kernel slot B" —
+# which the loader prints immediately before jumping — raced the kernel's own
+# first output: locally the kernel wins by milliseconds, on a loaded CI runner
+# the kill landed first and this test failed while the rollback it exercises had
+# worked perfectly. The loader-side assertions below are greps, so they are
+# already in the log by the time the kernel speaks.
+boot_once "Hello from Swift kernel" || fail "boot 4: slot B kernel did not start"
 grep -qF "rolling back to slot B" "$LOG" || fail "boot 4: no rollback log"
-grep -qF "Hello from Swift kernel" "$LOG" || fail "boot 4: slot B kernel did not start"
+grep -qF "UEFI: booted kernel slot B" "$LOG" || fail "boot 4: loader did not roll back to slot B"
 
 if [[ "$ok" -eq 1 ]]; then
   echo "PASS: kernel attempt-based rollback — unconfirmed slot A exhausts its attempts and the loader fails over to slot B (persisted)"
