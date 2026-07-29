@@ -104,6 +104,18 @@ private var processSegmentPages = 0
 private var processSlotLayoutReady = false
 // Growth/shrink + full-table scanners that must not observe a half-freed
 // trailing segment. Shape matches S4 spinlocks (irq_save + CAS word).
+//
+// Protocol: any walk of processSlotRange() that dereferences per-slot storage
+// MUST hold this lock for the whole walk. Shrink lowers capacity then returns
+// segment pages to the PMM under the same lock; without it a concurrent scan
+// that already sampled the old capacity is a use-after-free (not a benign stale
+// read — the bump heap never freed, PMM-backed segments do).
+//
+// Lock order: never acquire vfsLock / futex locks while holding this lock.
+// Nested the other way is OK for short bounded scans already under vfsLock
+// (e.g. cell handle-cap checks). Never hold this lock across yield/schedule.
+// Hot-path single-slot access (scheduler, current process) names live slots in
+// non-empty segments and does not take the lock.
 private var processSlotStorageLockWord: UInt64 = 0
 private var processSlotStorageLockAcquireCount: UInt64 = 0
 private var processSlotStorageLockContentionCount: UInt64 = 0
@@ -852,10 +864,13 @@ private func processInstallSlotStorage(capacity newCapacity: Int) -> Bool {
 }
 
 /// Free trailing segments whose slots are all unused and scheduler-quiesced.
-/// Capacity is lowered first so new processSlotRange() scans stop short of the
-/// retiring segment; the storage lock excludes concurrent full-table scanners
-/// that take the same lock. Hot-path single-slot access only names live slots,
+/// Capacity is lowered first so new processSlotRange() scanners that take the
+/// storage lock stop short of the retiring segment; the lock also excludes any
+/// scanner still mid-walk. Hot-path single-slot access only names live slots,
 /// which never live in a fully-unused trailing segment.
+///
+/// Caller must hold processSlotStorageLock (irq-masked). Freeing is deferred
+/// only until the lock is held — there is no unlocked free path.
 private func processTryShrinkSlotStorageLocked() {
     while processSegmentCount > 1 {
         let top = processSegmentCount - 1
@@ -934,6 +949,7 @@ func processInit() {
         }
         cpu += 1
     }
+    let initDaif = processSlotStorageLock()
     for i in processSlotRange() {
         pState[i] = pUnused
         pHomeCpu[i] = unassignedCpu
@@ -949,6 +965,7 @@ func processInit() {
         pSignalFrameSP[i] = 0
         pPendingSignals[i] = 0
     }
+    processSlotStorageUnlock(initDaif)
     for cpuSlot in 0..<processSchedulerCpuSlots {
         currentProcByCpu[cpuSlot] = -1
     }
@@ -1634,9 +1651,11 @@ private func resetLastS5fRunAnyTelemetry() {
     lastS5fRunAnyExitOkCount = 0
     s5fRunAnyPlacementActive = false
     s5fNextPlacementCpu = 0
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
         s5fRunAnySlots[slot] = -1
     }
+    processSlotStorageUnlock(daif)
 }
 
 private func processNextS5fRunAnyHomeCpu() -> UInt32 {
@@ -1884,20 +1903,28 @@ func processDispatchTelemetrySelfTest() -> Bool {
     if s5fRunAnyPlacementActive || s5fNextPlacementCpu != 0 {
         return false
     }
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
-        if s5fRunAnySlots[slot] != -1 { return false }
+        if s5fRunAnySlots[slot] != -1 {
+            processSlotStorageUnlock(daif)
+            return false
+        }
     }
+    for slot in processSlotRange() {
+        if pLastDispatchCpu[slot] != unassignedCpu ||
+           pDispatchCount[slot] != 0 ||
+           pDispatchCpuMask[slot] != 0 {
+            processSlotStorageUnlock(daif)
+            return false
+        }
+    }
+    processSlotStorageUnlock(daif)
     var cpu: UInt32 = 0
     while cpu < processRunQueueCpuCount {
         let idx = Int(cpu)
         if processDispatchTelemetryCount[idx] != 0 { return false }
         if smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
         cpu += 1
-    }
-    for slot in processSlotRange() {
-        if pLastDispatchCpu[slot] != unassignedCpu { return false }
-        if pDispatchCount[slot] != 0 { return false }
-        if pDispatchCpuMask[slot] != 0 { return false }
     }
     return true
 }
@@ -1915,9 +1942,14 @@ func processSecondaryEl0GateSelfTest() -> Bool {
         if processSecondaryEl0GateAllowsCpu(cpu) { return false }
         cpu += 1
     }
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
-        if processHomeCpuForNewReadySlot(slot) != 0 { return false }
+        if processHomeCpuForNewReadySlot(slot) != 0 {
+            processSlotStorageUnlock(daif)
+            return false
+        }
     }
+    processSlotStorageUnlock(daif)
     return true
 }
 
@@ -1946,9 +1978,14 @@ func processAddressSpaceCpuMaskSelfTest() -> Bool {
         if processAddressSpaceActivationCount[Int(cpu)] != 0 { return false }
         cpu += 1
     }
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
-        if pAddressSpaceCpuMask[slot] != 0 { return false }
+        if pAddressSpaceCpuMask[slot] != 0 {
+            processSlotStorageUnlock(daif)
+            return false
+        }
     }
+    processSlotStorageUnlock(daif)
     return true
 }
 
@@ -1978,13 +2015,19 @@ func processAddressSpaceCpuMaskPostRunSelfTest() -> Bool {
     if !sawPrimaryActivation { return false }
     if platform.cpuCount > 1 && !sawSecondaryActivation { return false }
 
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
         if pState[slot] == pUnused {
-            if pAddressSpaceCpuMask[slot] != 0 { return false }
+            if pAddressSpaceCpuMask[slot] != 0 {
+                processSlotStorageUnlock(daif)
+                return false
+            }
         } else if (pAddressSpaceCpuMask[slot] & ~pDispatchCpuMask[slot]) != 0 {
+            processSlotStorageUnlock(daif)
             return false
         }
     }
+    processSlotStorageUnlock(daif)
     return true
 }
 
@@ -2594,12 +2637,15 @@ func processAddressSpaceTlbFlushFacadeSelfTest() -> Bool {
 func processAddressSpaceTlbFlushPostRunSelfTest() -> Bool {
     let primary = currentCpuId()
     if primary != 0 || !processValidSchedulerCpu(primary) { return false }
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
         if pState[slot] == pUnused { continue }
         if (processAddressSpaceActiveCpuMaskForSlot(slot) & ~pDispatchCpuMask[slot]) != 0 {
+            processSlotStorageUnlock(daif)
             return false
         }
     }
+    processSlotStorageUnlock(daif)
     return processAddressSpaceCpuMaskPostRunSelfTest()
 }
 
@@ -2639,16 +2685,23 @@ func processDispatchTelemetryNoSecondarySelfTest() -> Bool {
         return false
     }
 
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
         if pDispatchCount[slot] == 0 {
-            if pLastDispatchCpu[slot] != unassignedCpu { return false }
-            if pDispatchCpuMask[slot] != 0 { return false }
+            if pLastDispatchCpu[slot] != unassignedCpu || pDispatchCpuMask[slot] != 0 {
+                processSlotStorageUnlock(daif)
+                return false
+            }
             continue
         }
-        if pLastDispatchCpu[slot] != primary { return false }
-        if pHomeCpu[slot] != primary { return false }
-        if pDispatchCpuMask[slot] != (UInt64(1) << Int(primary)) { return false }
+        if pLastDispatchCpu[slot] != primary ||
+           pHomeCpu[slot] != primary ||
+           pDispatchCpuMask[slot] != (UInt64(1) << Int(primary)) {
+            processSlotStorageUnlock(daif)
+            return false
+        }
     }
+    processSlotStorageUnlock(daif)
 
     var cpu: UInt32 = 0
     while cpu < processRunQueueCpuCount {
@@ -2975,21 +3028,34 @@ private func reapProcess(_ slot: Int) {
     // rather than leak its zombie slot. Re-scan after every reap because reaping
     // a child can reparent (and recursively reap) its own descendants, mutating
     // pParent under us; the scan is bounded by the live-tree depth (<= slot capacity).
+    //
+    // Find one orphan under the storage lock, then drop the lock before the
+    // recursive reap (reapProcess is not re-entrant on the storage lock and may
+    // shrink). Reparent similarly holds the lock only for the table walk.
     var collected = true
     while collected {
         collected = false
+        var orphan = -1
+        let scanDaif = processSlotStorageLock()
         for i in processSlotRange()
         where pParent[i] == slot && pState[i] == pZombie && pSchedulerQuiesced[i] {
-            reapProcess(i)
+            orphan = i
+            break
+        }
+        processSlotStorageUnlock(scanDaif)
+        if orphan >= 0 {
+            reapProcess(orphan)
             collected = true
         }
     }
     // Any still-live children become kernel orphans. Flag them so a later exit is
     // collected by the in-scheduler reaper (nobody waitpid()s a -1 parent).
+    let reparentDaif = processSlotStorageLock()
     for i in processSlotRange() where pParent[i] == slot {
         pParent[i] = -1
         pReparentedOrphan[i] = true
     }
+    processSlotStorageUnlock(reparentDaif)
     pState[slot] = pUnused
     clearProcessSchedulerSlot(slot)
     pSchedulerQuiesced[slot] = true
@@ -3070,7 +3136,9 @@ func processRunElf(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, a
 /// (state != pUnused). Used by the QW3 orphan-reap self-test (no ABI surface).
 func processLiveSlotCount() -> Int {
     var n = 0
+    let daif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused { n += 1 }
+    processSlotStorageUnlock(daif)
     return n
 }
 
@@ -3562,9 +3630,11 @@ private func resetLastS5gDefaultPlacementTelemetry() {
     lastS5gDefaultPlacementDispatchCount = 0
     lastS5gDefaultPlacementExactCpuMatchCount = 0
     lastS5gDefaultPlacementPolicySelectionCount = 0
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
         s5gDefaultPlacementSlots[slot] = -1
     }
+    processSlotStorageUnlock(daif)
 }
 
 /// S5g acceptance: secondary schedulers are permanently online; briefly open
@@ -4101,11 +4171,15 @@ func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
     while true {
         var found = -1
         var live = 0
+        // Storage lock only for the table walk — never across reap or yield
+        // (reapProcess takes the same lock; yield re-enters the scheduler).
+        let scanDaif = processSlotStorageLock()
         for i in processSlotRange() where pState[i] != pUnused && pParent[i] == parent {
             if wantSlot != waitAny && i != wantSlot { continue }
             live += 1
             if pState[i] == pZombie && pSchedulerQuiesced[i] { found = i; break }
         }
+        processSlotStorageUnlock(scanDaif)
         if found >= 0 {
             let code = pExit[found]
             let killed = pKilled[found]
@@ -4287,34 +4361,38 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
 /// SYS_psinfo: copy fixed-size process records into a caller-provided buffer.
 /// Record layout (32 bytes): pid:u32, ppid:u32, state:u32, name[20].
 func processSnapshot(buffer: UInt, capacity: UInt) -> Int {
-    var total = 0
-    let writable = capacity > UInt(processSlotCapacity()) ? processSlotCapacity() : Int(capacity)
+    // Buffer sizing may use a slightly stale capacity; the locked walk below is
+    // the authority for which slots are still mapped.
+    let sizingCap = processSlotCapacity()
+    let writable = capacity > UInt(sizingCap) ? sizingCap : Int(capacity)
+    var dst: UnsafeMutableRawPointer? = nil
     if writable > 0 {
-        guard let dst = userWritableBuffer(buffer, UInt(writable * psInfoRecordSize)) else {
+        guard let b = userWritableBuffer(buffer, UInt(writable * psInfoRecordSize)) else {
             return Errno.invalid.code
         }
-        let raw = UnsafeMutableRawPointer(dst)
-        for i in processSlotRange() where pState[i] != pUnused {
-            if total < writable {
-                let rec = raw.advanced(by: total * psInfoRecordSize)
-                let ppid = pParent[i] >= 0 ? UInt32(pParent[i] + 1) : UInt32(0)
-                rec.storeBytes(of: UInt32(i + 1), toByteOffset: 0, as: UInt32.self)
-                rec.storeBytes(of: ppid, toByteOffset: 4, as: UInt32.self)
-                rec.storeBytes(of: UInt32(bitPattern: pState[i]), toByteOffset: 8, as: UInt32.self)
-
-                let nameDst = rec.advanced(by: 12).assumingMemoryBound(to: UInt8.self)
-                var j = 0
-                let nameBase = i * procNameMax
-                while j < 20 {
-                    nameDst[j] = j < pNameLen[i] ? pName[nameBase + j] : 0
-                    j += 1
-                }
-            }
-            total += 1
-        }
-    } else {
-        for i in processSlotRange() where pState[i] != pUnused { total += 1 }
+        dst = UnsafeMutableRawPointer(b)
     }
+    var total = 0
+    let daif = processSlotStorageLock()
+    for i in processSlotRange() where pState[i] != pUnused {
+        if total < writable, let raw = dst {
+            let rec = raw.advanced(by: total * psInfoRecordSize)
+            let ppid = pParent[i] >= 0 ? UInt32(pParent[i] + 1) : UInt32(0)
+            rec.storeBytes(of: UInt32(i + 1), toByteOffset: 0, as: UInt32.self)
+            rec.storeBytes(of: ppid, toByteOffset: 4, as: UInt32.self)
+            rec.storeBytes(of: UInt32(bitPattern: pState[i]), toByteOffset: 8, as: UInt32.self)
+
+            let nameDst = rec.advanced(by: 12).assumingMemoryBound(to: UInt8.self)
+            var j = 0
+            let nameBase = i * procNameMax
+            while j < 20 {
+                nameDst[j] = j < pNameLen[i] ? pName[nameBase + j] : 0
+                j += 1
+            }
+        }
+        total += 1
+    }
+    processSlotStorageUnlock(daif)
     return total
 }
 
@@ -4322,39 +4400,41 @@ func processSnapshot(buffer: UInt, capacity: UInt) -> Int {
 /// Record layout (56 bytes, naturally aligned): pid:u32, ppid:u32, state:u32,
 /// principal:u32, cpuTicks:u64, startTick:u64, resBytes:u64, name[16].
 func processStatSnapshot(buffer: UInt, capacity: UInt) -> Int {
-    var total = 0
-    let writable = capacity > UInt(processSlotCapacity()) ? processSlotCapacity() : Int(capacity)
+    let sizingCap = processSlotCapacity()
+    let writable = capacity > UInt(sizingCap) ? sizingCap : Int(capacity)
+    var dst: UnsafeMutableRawPointer? = nil
     if writable > 0 {
-        guard let dst = userWritableBuffer(buffer, UInt(writable * procStatRecordSize)) else {
+        guard let b = userWritableBuffer(buffer, UInt(writable * procStatRecordSize)) else {
             return Errno.invalid.code
         }
-        let raw = UnsafeMutableRawPointer(dst)
-        let frameBytes = UInt64(PageAllocator.pageSize)
-        for i in processSlotRange() where pState[i] != pUnused {
-            if total < writable {
-                let rec = raw.advanced(by: total * procStatRecordSize)
-                let ppid = pParent[i] >= 0 ? UInt32(pParent[i] + 1) : UInt32(0)
-                rec.storeBytes(of: UInt32(i + 1), toByteOffset: 0, as: UInt32.self)
-                rec.storeBytes(of: ppid, toByteOffset: 4, as: UInt32.self)
-                rec.storeBytes(of: UInt32(bitPattern: pState[i]), toByteOffset: 8, as: UInt32.self)
-                rec.storeBytes(of: pSecurity[i].principal, toByteOffset: 12, as: UInt32.self)
-                rec.storeBytes(of: pCpuTicks[i], toByteOffset: 16, as: UInt64.self)
-                rec.storeBytes(of: pStartTick[i], toByteOffset: 24, as: UInt64.self)
-                rec.storeBytes(of: UInt64(pResPages[i]) * frameBytes, toByteOffset: 32, as: UInt64.self)
-
-                let nameDst = rec.advanced(by: 40).assumingMemoryBound(to: UInt8.self)
-                var j = 0
-                let nameBase = i * procNameMax
-                while j < 16 {
-                    nameDst[j] = j < pNameLen[i] ? pName[nameBase + j] : 0
-                    j += 1
-                }
-            }
-            total += 1
-        }
-    } else {
-        for i in processSlotRange() where pState[i] != pUnused { total += 1 }
+        dst = UnsafeMutableRawPointer(b)
     }
+    var total = 0
+    let frameBytes = UInt64(PageAllocator.pageSize)
+    let daif = processSlotStorageLock()
+    for i in processSlotRange() where pState[i] != pUnused {
+        if total < writable, let raw = dst {
+            let rec = raw.advanced(by: total * procStatRecordSize)
+            let ppid = pParent[i] >= 0 ? UInt32(pParent[i] + 1) : UInt32(0)
+            rec.storeBytes(of: UInt32(i + 1), toByteOffset: 0, as: UInt32.self)
+            rec.storeBytes(of: ppid, toByteOffset: 4, as: UInt32.self)
+            rec.storeBytes(of: UInt32(bitPattern: pState[i]), toByteOffset: 8, as: UInt32.self)
+            rec.storeBytes(of: pSecurity[i].principal, toByteOffset: 12, as: UInt32.self)
+            rec.storeBytes(of: pCpuTicks[i], toByteOffset: 16, as: UInt64.self)
+            rec.storeBytes(of: pStartTick[i], toByteOffset: 24, as: UInt64.self)
+            rec.storeBytes(of: UInt64(pResPages[i]) * frameBytes, toByteOffset: 32, as: UInt64.self)
+
+            let nameDst = rec.advanced(by: 40).assumingMemoryBound(to: UInt8.self)
+            var j = 0
+            let nameBase = i * procNameMax
+            while j < 16 {
+                nameDst[j] = j < pNameLen[i] ? pName[nameBase + j] : 0
+                j += 1
+            }
+        }
+        total += 1
+    }
+    processSlotStorageUnlock(daif)
     return total
 }
 
@@ -4381,12 +4461,16 @@ func processCellStat(cell rawCell: UInt32, buffer: UInt, capacity: UInt) -> Int 
     var residentPages: UInt64 = 0
     var cpuTicks: UInt64 = 0
     var handles: UInt32 = 0
+    // vfsHandleCount does not take vfsLock (reads a slot's fd table only), so
+    // nesting it under the storage lock is safe and preserves lock order.
+    let daif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == rawCell {
         processes += 1
         residentPages &+= UInt64(pResPages[i])
         cpuTicks &+= pCpuTicks[i]
         handles &+= UInt32(truncatingIfNeeded: vfsHandleCount(slot: i))
     }
+    processSlotStorageUnlock(daif)
     let raw = UnsafeMutableRawPointer(dst)
     raw.storeBytes(of: rawCell, toByteOffset: 0, as: UInt32.self)
     raw.storeBytes(of: processes, toByteOffset: 4, as: UInt32.self)
@@ -4401,9 +4485,11 @@ func processCellStat(cell rawCell: UInt32, buffer: UInt, capacity: UInt) -> Int 
 /// bounded scan keyed on the CellId tag, like processCellStat (no per-cell counter).
 func processCellResidentPages(_ cellRaw: UInt32) -> Int {
     var pages = 0
+    let daif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
         pages += pResPages[i]
     }
+    processSlotStorageUnlock(daif)
     return pages
 }
 
@@ -4441,9 +4527,13 @@ func processCellRawForSlot(_ slot: Int) -> UInt32 {
 /// summing each member's per-process handle count. No per-cell counter table.
 func processCellHandleCount(_ cellRaw: UInt32) -> Int {
     var n = 0
+    // May run nested under vfsLock (cell handle-cap checks). Storage lock is
+    // always the inner lock relative to vfsLock; never reverse that order.
+    let daif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
         n += vfsHandleCount(slot: i)
     }
+    processSlotStorageUnlock(daif)
     return n
 }
 
@@ -4451,7 +4541,9 @@ func processCellHandleCount(_ cellRaw: UInt32) -> Int {
 /// refuse teardown while any member is still running (EBUSY).
 func processCellLiveCount(_ cellRaw: UInt32) -> Int {
     var n = 0
+    let daif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw { n += 1 }
+    processSlotStorageUnlock(daif)
     return n
 }
 
@@ -4461,19 +4553,22 @@ func processCellLiveCount(_ cellRaw: UInt32) -> Int {
 /// written if the buffer was too small), or a negative errno. Authority is by the
 /// control handle (resolved by the syscall layer); this trusts the validated raw.
 func processCellPids(_ cellRaw: UInt32, buffer: UInt, capacity: UInt) -> Int {
-    let writable = capacity > UInt(processSlotCapacity()) ? processSlotCapacity() : Int(capacity)
+    let sizingCap = processSlotCapacity()
+    let writable = capacity > UInt(sizingCap) ? sizingCap : Int(capacity)
     var dst: UnsafeMutableRawPointer? = nil
     if writable > 0 {
         guard let b = userWritableBuffer(buffer, UInt(writable * 4)) else { return Errno.invalid.code }
         dst = UnsafeMutableRawPointer(b)
     }
     var total = 0
+    let daif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
         if total < writable, let raw = dst {
             raw.storeBytes(of: UInt32(i + 1), toByteOffset: total * 4, as: UInt32.self) // pid = slot+1
         }
         total += 1
     }
+    processSlotStorageUnlock(daif)
     return total
 }
 
@@ -4501,10 +4596,12 @@ func processSysInfo(buffer: UInt, capacity: UInt) -> Int {
 
     var total = 0
     var running = 0
+    let scanDaif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused {
         total += 1
         if pState[i] == pRunning || pState[i] == pReady { running += 1 }
     }
+    processSlotStorageUnlock(scanDaif)
 
     let frameBytes = UInt64(PageAllocator.pageSize)
     let memFree = UInt64(pmmFreeCount()) * frameBytes

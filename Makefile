@@ -571,6 +571,7 @@ USER_S4STRESS_ELF := $(BUILD)/s4stress.elf
 USER_SATSTRESS_ELF := $(BUILD)/satstress.elf
 USER_EPCAPPROBE_ELF := $(BUILD)/epcapprobe.elf
 USER_SMPRACE_ELF := $(BUILD)/smprace.elf
+USER_SLOTSCANSTRESS_ELF := $(BUILD)/slotscanstress.elf
 USER_EDGESTRESS_ELF := $(BUILD)/edgestress.elf
 USER_STACKOVF_ELF := $(BUILD)/stackovf.elf
 USER_SECURITYDEMO_ELF := $(BUILD)/securitydemo.elf
@@ -783,6 +784,7 @@ BASE_EXEC_ELFS := \
 	$(USER_SATSTRESS_ELF) \
 	$(USER_EPCAPPROBE_ELF) \
 	$(USER_SMPRACE_ELF) \
+	$(USER_SLOTSCANSTRESS_ELF) \
 	$(USER_EDGESTRESS_ELF) \
 	$(USER_STACKOVF_ELF) \
 	$(USER_SECURITYDEMO_ELF) \
@@ -979,6 +981,9 @@ $(BUILD)/user_epcapprobe.o: userland/epcapprobe.c userland/lib/syscall.h Makefil
 
 $(BUILD)/user_smprace.o: userland/smprace.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/smprace.c -o $@
+
+$(BUILD)/user_slotscanstress.o: userland/slotscanstress.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
+	$(CLANG) $(USER_CFLAGS) userland/slotscanstress.c -o $@
 
 $(BUILD)/user_edgestress.o: userland/edgestress.c userland/lib/syscall.h userland/lib/fs.h Makefile | $(BUILD)/.dir
 	$(CLANG) $(USER_CFLAGS) userland/edgestress.c -o $@
@@ -1427,6 +1432,9 @@ $(USER_EPCAPPROBE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_
 
 $(USER_SMPRACE_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_smprace.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_smprace.o -o $@
+
+$(USER_SLOTSCANSTRESS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_slotscanstress.o userland/user.ld Makefile
+	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_slotscanstress.o -o $@
 
 $(USER_EDGESTRESS_ELF): $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_edgestress.o userland/user.ld Makefile
 	$(LDBIN) $(USER_LDFLAGS) $(BUILD)/user_crt0.o $(BUILD)/user_libc.o $(BUILD)/user_edgestress.o -o $@
@@ -4396,6 +4404,7 @@ $(BASE_IMG): $(BASEPACK) $(BASE_SEED_FILES) $(BASE_EXEC_ELFS) $(PKGHELLO_PKG) $(
 	cp $(USER_SATSTRESS_ELF) $(BASE_ROOT)/bin/satstress
 	cp $(USER_EPCAPPROBE_ELF) $(BASE_ROOT)/bin/epcapprobe
 	cp $(USER_SMPRACE_ELF) $(BASE_ROOT)/bin/smprace
+	cp $(USER_SLOTSCANSTRESS_ELF) $(BASE_ROOT)/bin/slotscanstress
 	cp $(USER_EDGESTRESS_ELF) $(BASE_ROOT)/bin/edgestress
 	cp $(USER_STACKOVF_ELF) $(BASE_ROOT)/bin/stackovf
 	cp $(USER_SECURITYDEMO_ELF) $(BASE_ROOT)/bin/securitydemo
