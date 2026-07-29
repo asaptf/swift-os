@@ -143,17 +143,17 @@ for needle in \
   fi
 done
 
-# Per-process scheduler tables are growable heap pointers (processGrowTable),
-# not fixed Swift Array storage. Match the current process.swift layout.
+# Per-process scheduler tables are PMM-backed segmented SoA facades
+# (ProcessSlotField), not fixed Swift Array storage. Match process.swift.
 for needle in \
-  'private var pHomeCpu: UnsafeMutablePointer<UInt32>! = nil' \
-  'private var pRunNext: UnsafeMutablePointer<Int32>! = nil' \
-  'private var pRunQueued: UnsafeMutablePointer<Bool>! = nil' \
-  'private var pLastDispatchCpu: UnsafeMutablePointer<UInt32>! = nil' \
-  'private var pDispatchCount: UnsafeMutablePointer<UInt64>! = nil' \
-  'private var pDispatchCpuMask: UnsafeMutablePointer<UInt64>! = nil' \
-  'private var pAddressSpaceCpuMask: UnsafeMutablePointer<UInt64>! = nil' \
-  'private var pSchedulerQuiesced: UnsafeMutablePointer<Bool>! = nil' \
+  'private var pHomeCpu = ProcessSlotField<UInt32>()' \
+  'private var pRunNext = ProcessSlotField<Int32>()' \
+  'private var pRunQueued = ProcessSlotField<Bool>()' \
+  'private var pLastDispatchCpu = ProcessSlotField<UInt32>()' \
+  'private var pDispatchCount = ProcessSlotField<UInt64>()' \
+  'private var pDispatchCpuMask = ProcessSlotField<UInt64>()' \
+  'private var pAddressSpaceCpuMask = ProcessSlotField<UInt64>()' \
+  'private var pSchedulerQuiesced = ProcessSlotField<Bool>()' \
   'private var processRunQueueHead = \[Int32\]' \
   'private var processRunQueueTail = \[Int32\]' \
   'private var processRunQueueEnqueueCount = \[UInt64\]' \

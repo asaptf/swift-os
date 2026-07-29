@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
-# saturation_test.sh - fixed-size kernel-pool saturation smoke.
+# slot_scan_stress_test.sh - concurrent full-table scan vs slot grow/shrink.
 #
-# Boots, logs in as root, and runs /bin/satstress, which drives the still-
-# bounded kernel resource pools (per-process fds, pipes, IPC endpoints) to
-# their ceiling and back, exercises process-table growth past the initial
-# slot capacity (PMM-backed reclaimable segments: free memory must return after
-# reap), and under artificial memory pressure asserts fork fails with EAGAIN
-# (admission reserve) without panic, plus a balanced vnode create/unlink churn.
-# For bounded pools the pass condition is twofold: refuse gracefully at the
-# cap (a clean negative errno, NOT a panic) AND recover afterwards (no slot
-# leak). Defaults to single-core (the cap logic is not SMP-specific); set
-# SMP_CPUS=N to also exercise the S4 pool locks while secondaries are online
-# and ticking.
+# Boots under -smp N (default 4), logs in as root, and runs /bin/slotscanstress,
+# which races SYS_PSINFO/SYS_SYSINFO/SYS_PROCSTAT full-table walks against
+# fork/reap churn that grows and reclaims PMM-backed process-slot segments.
+#
+# Pass: no panic, SLOTSCAN-OK, free memory returns after the final churn cycle.
+# A green run is evidence the scan/shrink use-after-free is closed for the
+# exercised interleavings — not a formal proof of every possible schedule.
 
 set -u
 
@@ -21,7 +17,7 @@ source "$ROOT/tests/lib/timeouts.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
-SMP_CPUS="${SMP_CPUS:-1}"
+SMP_CPUS="${SMP_CPUS:-4}"
 
 if [[ ! "$SMP_CPUS" =~ ^[0-9]+$ ]] || (( 10#$SMP_CPUS < 1 )); then
   echo "FAIL: SMP_CPUS must be a positive integer, got '$SMP_CPUS'." >&2
@@ -34,16 +30,16 @@ if (( SMP_CPU_COUNT > 8 )); then
 fi
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
-if [[ ! -f "$DISK" || "$ROOT/userland/satstress.c" -nt "$DISK" || "$ROOT/Makefile" -nt "$DISK" ]]; then
+if [[ ! -f "$DISK" || "$ROOT/userland/slotscanstress.c" -nt "$DISK" || "$ROOT/Makefile" -nt "$DISK" ]]; then
   ( cd "$ROOT" && make base-image ) >/dev/null 2>&1 || {
     echo "FAIL: cannot build base.img" >&2
     exit 2
   }
 fi
 
-LOG="$(mktemp -t swiftos-sat.XXXXXX)"
-PIDFILE="$(mktemp -t swiftos-sat-pid.XXXXXX)"
-INFIFO="$(mktemp -u -t swiftos-sat-in.XXXXXX)"; mkfifo "$INFIFO"
+LOG="$(mktemp -t swiftos-slotscan.XXXXXX)"
+PIDFILE="$(mktemp -t swiftos-slotscan-pid.XXXXXX)"
+INFIFO="$(mktemp -u -t swiftos-slotscan-in.XXXXXX)"; mkfifo "$INFIFO"
 QP=""
 
 stop_qemu() {
@@ -70,22 +66,21 @@ await() {
 
 drive_fail() {
   echo "FAIL: $1" >&2
-  echo "--- serial (saturation stress) ---" >&2
-  sed 's/\r//' "$LOG" 2>/dev/null | tail -160 >&2 || true
+  echo "--- serial (slot-scan stress) ---" >&2
+  sed 's/\r//' "$LOG" 2>/dev/null | tail -200 >&2 || true
   exit 1
 }
 
 send_line() {
-  local line="$1" delay="${SAT_CHAR_DELAY:-0.02}" i
+  local line="$1" delay="${SLOTSCAN_CHAR_DELAY:-0.02}" i
   for (( i = 0; i < ${#line}; i++ )); do
     printf '%s' "${line:i:1}" >&3
     sleep "$delay"
   done
   printf '\n' >&3
-  sleep "${SAT_SEND_DELAY:-0.12}"
+  sleep "${SLOTSCAN_SEND_DELAY:-0.12}"
 }
 
-# Device-tree blob: single-core uses virt.dtb, SMP uses virt-smp-N.dtb.
 if (( SMP_CPU_COUNT == 1 )); then
   DTB="${SMP_DTB:-$ROOT/build/virt.dtb}"
 else
@@ -120,9 +115,9 @@ send_line 'root'
 await "Password:" 90 || drive_fail "timed out waiting for password prompt"
 send_line 'swordfish'
 await "M12c: shell ready" 120 || drive_fail "root shell did not start"
-send_line '/bin/satstress'
-await "M11d: exec loaded from disk /bin/satstress" 60 || drive_fail "satstress did not execute"
-await "SAT-OK fixed-size pool saturation completed" 120 || drive_fail "satstress did not finish"
+send_line '/bin/slotscanstress'
+await "M11d: exec loaded from disk /bin/slotscanstress" 60 || drive_fail "slotscanstress did not execute"
+await "SLOTSCAN-OK scan+shrink concurrency completed" 180 || drive_fail "slotscanstress did not finish"
 send_line 'exit'
 await "M12c: session ended" 60 || true
 
@@ -133,24 +128,20 @@ QP=""
 clean="$(sed 's/\r//' "$LOG")"
 ok=1
 for marker in \
-  "SAT-START fixed-size pool saturation" \
-  "SAT-PROC-OK n=" \
-  "SAT-PROC-MEM before=" \
-  "SAT-ADMIT-OK refused_after_n=" \
-  "SAT-FD-OK n=" \
-  "SAT-PIPE-OK n=" \
-  "SAT-ENDPOINT-OK n=" \
-  "SAT-VNODE-OK" \
-  "SAT-OK fixed-size pool saturation completed"; do
+  "SLOTSCAN-START scan+shrink concurrency stress" \
+  "SLOTSCAN-SCANNER-OK id=0" \
+  "SLOTSCAN-CHURN-OK id=0" \
+  "SLOTSCAN-MEM before=" \
+  "SLOTSCAN-OK scan+shrink concurrency completed"; do
   grep -qF "$marker" <<<"$clean" || { echo "FAIL: missing marker: $marker" >&2; ok=0; }
 done
-grep -qF "SAT-FAIL" <<<"$clean" && { echo "FAIL: satstress reported a failure" >&2; ok=0; }
-grep -qF "panic:" <<<"$clean" && { echo "FAIL: kernel panic seen during saturation stress" >&2; ok=0; }
+grep -qF "SLOTSCAN-FAIL" <<<"$clean" && { echo "FAIL: slotscanstress reported a failure" >&2; ok=0; }
+grep -qF "panic:" <<<"$clean" && { echo "FAIL: kernel panic during slot-scan stress" >&2; ok=0; }
 
 if [[ "$ok" -eq 1 ]]; then
-  echo "PASS: fixed-size pool saturation graceful + recovered under -smp $SMP_CPU_COUNT"
+  echo "PASS: slot-scan vs grow/shrink concurrency under -smp $SMP_CPU_COUNT (evidence, not proof)"
   exit 0
 fi
-echo "--- serial (saturation stress region) ---" >&2
-sed -n '/\/bin\/satstress/,$p' <<<"$clean" | head -80 >&2
+echo "--- serial (slot-scan stress) ---" >&2
+sed 's/\r//' "$LOG" 2>/dev/null | tail -200 >&2 || true
 exit 1

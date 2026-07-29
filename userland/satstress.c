@@ -5,7 +5,8 @@
 // drive to its ceiling and then fully release, this workload proves TWO things
 // the product profiles depend on:
 //   1. graceful saturation - hitting the cap returns a clean negative errno
-//      (ENOMEM/EMFILE/ENOSPC), never a kernel panic or a wedged allocator; and
+//      (ENOMEM/EMFILE/ENOSPC/EAGAIN), never a kernel panic or a wedged
+//      allocator; and
 //   2. baseline return - once the held resources are released, the pool is
 //      usable again (no slot leak), so a transient load spike cannot
 //      permanently degrade the system.
@@ -13,15 +14,15 @@
 // Pools exercised (limits as of this writing; the test does not hard-code them,
 // it discovers the ceiling where a fixed ceiling still exists): per-process fds
 // (maxFDs=512), pipes (maxPipes=16), IPC endpoints (maxEndpoints=32). The process
-// table is different: PT2a/PT3a made slot storage growable from
-// kInitialProcessSlots with no fixed ceiling (growth stops only when a kernel
-// allocation fails). Driving that path to genuine memory exhaustion on a 256 MiB
-// guest is slow and unstable, so the process case does NOT assert fork refusal.
-// It instead forks a fixed batch past the initial capacity, proves the children
-// coexist and are fully reaped, and checks baseline return. A vnode create/unlink
-// churn confirms the tmpfs node pool stays balanced under repeated allocation
-// without driving the *shared* table to global exhaustion (which would starve
-// the login shell - that is a separate, riskier soak test).
+// table is growable from kInitialProcessSlots with no fixed ceiling (PT3a/PT3b):
+// growth is PMM-backed and reclaimable, and refuses when free physical frames
+// would fall below a kernel reserve. The process case therefore:
+//   - forks a fixed batch past the initial capacity, reaps, and asserts free
+//     physical memory returns to roughly the pre-bomb level (reclaim);
+//   - under artificial memory pressure, asserts fork fails with EAGAIN and the
+//     system keeps running (admission).
+// A vnode create/unlink churn confirms the tmpfs node pool stays balanced under
+// repeated allocation without driving the *shared* table to global exhaustion.
 
 #include "lib/syscall.h"
 #include "lib/fs.h"
@@ -38,6 +39,13 @@ int puts_raw(const char *s);
 #define PIPE_GUARD 64
 #define ENDPOINT_GUARD 64
 #define VNODE_CHURN 256
+
+// Free-RAM tolerance for measurement noise (other quiescent tasks, one-time
+// bumps). A leaked process-slot segment is multiple pages and dwarfs this.
+#define MEM_TOLERANCE_BYTES (512UL * 1024)
+
+// POSIX EAGAIN as returned by the raw fork syscall (negative errno).
+#define FORK_EAGAIN (-11)
 
 static void put_uint(unsigned long v) {
     char buf[24];
@@ -84,19 +92,54 @@ static void make_vnode_path(char *dst, int i) {
     dst[pos] = 0;
 }
 
+// Read system free memory (bytes) from sysinfo offset 24. Returns 0 on error.
+static unsigned long read_memfree(void) {
+    unsigned char buf[64];
+    for (int i = 0; i < 64; i += 1) {
+        buf[i] = 0;
+    }
+    long rc = __syscall3(SYS_SYSINFO, (long)buf, 64, 0);
+    if (rc < 0) {
+        return 0;
+    }
+    unsigned long v = 0;
+    for (int i = 0; i < 8; i += 1) {
+        v |= ((unsigned long)buf[24 + i]) << (8 * i);
+    }
+    return v;
+}
+
+static unsigned long abs_diff(unsigned long a, unsigned long b) {
+    return a > b ? a - b : b - a;
+}
+
 // --- Processes: fixed batch past initial capacity, then reclaim. -------------
 //
-// Do NOT restore a "fork must refuse before PROC_*" assertion. The process
-// table starts at kInitialProcessSlots (64) and grows by processSlotGrowChunk
-// (64) with no upper bound until a kernel allocation fails (PT3a). Requiring
-// fork failure here was correct only for the old fixed 64-slot table; with a
-// growable table the guard is reached while the kernel is still healthy, which
-// is exactly the failure this test used to report (SAT-FAIL proc-cap-never-
-// engaged). Policy caps on process slots are an open design question and out
-// of scope for this smoke test. What we still prove: growth past the initial
-// capacity (PROC_BATCH live children), full reclaim, baseline fork recovery,
-// and no panic across the run.
+// Proves growth past the initial capacity (PROC_BATCH live children), full
+// reclaim, baseline fork recovery, free-memory return (PT3b: segment pages go
+// back to the PMM), and no panic across the run.
 static int saturate_processes(void) {
+    // Warm-up fork so one-time subsystem tables are not charged against the
+    // free-memory baseline we are about to capture.
+    {
+        int w = fork();
+        if (w < 0) {
+            return fail("proc-warmup-fork");
+        }
+        if (w == 0) {
+            _exit(0);
+        }
+        int st = 0;
+        if (waitpid(w, &st, 0) != w) {
+            return fail("proc-warmup-reap");
+        }
+    }
+
+    unsigned long before = read_memfree();
+    if (before == 0) {
+        return fail("proc-sysinfo-unavailable");
+    }
+
     int block[2];
     if (pipe(block) != 0) {
         return fail("proc-pipe-setup");
@@ -128,6 +171,10 @@ static int saturate_processes(void) {
         pids[n++] = pid;
     }
 
+    // Peak free memory should be strictly lower while the grown segment and
+    // live children hold frames (observability for the before/after report).
+    unsigned long during = read_memfree();
+
     // Release: closing every write end unblocks each child's read -> they exit.
     close(block[1]);
     close(block[0]);
@@ -150,7 +197,162 @@ static int saturate_processes(void) {
     if (waitpid(pid, &status, 0) != pid) {
         return fail("proc-recover-reap");
     }
+
+    unsigned long after = read_memfree();
+    if (abs_diff(before, after) > MEM_TOLERANCE_BYTES) {
+        puts_raw("SAT-FAIL proc-mem-leak before=");
+        put_uint(before);
+        puts_raw(" during=");
+        put_uint(during);
+        puts_raw(" after=");
+        put_uint(after);
+        puts_raw("\n");
+        return 1;
+    }
+
     ok_count("SAT-PROC-OK n=", (unsigned long)n);
+    puts_raw("SAT-PROC-MEM before=");
+    put_uint(before);
+    puts_raw(" during=");
+    put_uint(during);
+    puts_raw(" after=");
+    put_uint(after);
+    puts_raw("\n");
+    return 0;
+}
+
+// --- Admission: under memory pressure fork must fail with EAGAIN. ------------
+//
+// A helper child pins free physical frames below the process-slot growth reserve
+// so the parent's address space stays small (cheap COW). The parent then forks
+// until table growth is required and refused with EAGAIN (raw -11). Never a
+// panic; after release the system must fork again.
+static int saturate_admission(void) {
+    unsigned long page = 4096;
+    enum { ADMIT_GUARD = 512 };
+
+    // Pipe 1: parent -> hog: "release and exit".
+    // Pipe 2: hog -> parent: "memory is pinned".
+    int release_pipe[2];
+    int ready_pipe[2];
+    if (pipe(release_pipe) != 0 || pipe(ready_pipe) != 0) {
+        return fail("admit-pipe");
+    }
+
+    int hog = fork();
+    if (hog < 0) {
+        return fail("admit-hog-fork");
+    }
+    if (hog == 0) {
+        close(release_pipe[1]);
+        close(ready_pipe[0]);
+        unsigned long free_now = read_memfree();
+        // Leave ~6 MiB free: reserve is 8 MiB, so a new slot segment cannot be
+        // admitted. Child kstacks for a small parent still fit in the cushion.
+        unsigned long leave_free = 6UL * 1024 * 1024;
+        unsigned long grab = free_now > leave_free ? free_now - leave_free : 0;
+        grab = (grab / page) * page;
+        if (grab >= page) {
+            char *blob = (char *)mmap(0, grab, PROT_READ | PROT_WRITE,
+                                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (blob != (char *)MAP_FAILED) {
+                for (unsigned long off = 0; off < grab; off += page) {
+                    blob[off] = (char)(off & 0xff);
+                }
+            }
+        }
+        // Signal parent, then park until released.
+        char ok = 'R';
+        write(ready_pipe[1], &ok, 1);
+        close(ready_pipe[1]);
+        char c;
+        read(release_pipe[0], &c, 1);
+        _exit(0);
+    }
+
+    close(release_pipe[0]);
+    close(ready_pipe[1]);
+    char ready = 0;
+    if (read(ready_pipe[0], &ready, 1) != 1) {
+        close(release_pipe[1]);
+        close(ready_pipe[0]);
+        int st = 0;
+        (void)waitpid(hog, &st, 0);
+        return fail("admit-hog-ready");
+    }
+    close(ready_pipe[0]);
+
+    // Parent is still small. Fork until growth is refused (EAGAIN). Cap so a
+    // missing admission check cannot run forever.
+    int block[2];
+    if (pipe(block) != 0) {
+        close(release_pipe[1]);
+        int st = 0;
+        (void)waitpid(hog, &st, 0);
+        return fail("admit-block-pipe");
+    }
+
+    int pids[ADMIT_GUARD];
+    int n = 0;
+    int refused = 0;
+    int refused_errno = 0;
+    while (n < ADMIT_GUARD) {
+        int pid = fork();
+        if (pid < 0) {
+            refused = 1;
+            refused_errno = pid;
+            break;
+        }
+        if (pid == 0) {
+            close(block[1]);
+            close(release_pipe[1]);
+            char c;
+            read(block[0], &c, 1);
+            _exit(0);
+        }
+        pids[n++] = pid;
+    }
+
+    close(block[1]);
+    close(block[0]);
+    for (int i = 0; i < n; i += 1) {
+        int status = 0;
+        (void)waitpid(pids[i], &status, 0);
+    }
+
+    // Release the hog's pin.
+    char go = 'X';
+    write(release_pipe[1], &go, 1);
+    close(release_pipe[1]);
+    {
+        int st = 0;
+        (void)waitpid(hog, &st, 0);
+    }
+
+    if (!refused) {
+        return fail("admit-never-engaged");
+    }
+    if (refused_errno != FORK_EAGAIN) {
+        puts_raw("SAT-FAIL admit-bad-errno got=");
+        put_uint((unsigned long)(long)(-refused_errno));
+        puts_raw("\n");
+        return 1;
+    }
+
+    // System keeps running: fork must succeed after pressure is released.
+    int pid = fork();
+    if (pid < 0) {
+        return fail("admit-no-recover");
+    }
+    if (pid == 0) {
+        _exit(0);
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) != pid) {
+        return fail("admit-recover-reap");
+    }
+
+    ok_count("SAT-ADMIT-OK refused_after_n=", (unsigned long)n);
     return 0;
 }
 
@@ -298,6 +500,9 @@ static int saturate_vnodes(void) {
 int main(void) {
     puts_raw("SAT-START fixed-size pool saturation\n");
     if (saturate_processes() != 0) {
+        return 1;
+    }
+    if (saturate_admission() != 0) {
         return 1;
     }
     if (saturate_fds() != 0) {

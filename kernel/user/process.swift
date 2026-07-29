@@ -44,9 +44,87 @@ private let userMmapFloor: UInt = 0x1_0000_0000 // heap/mmap boundary; arena gro
 // allocator exhausts the currently visible range. The value remains 64 because it
 // is a good hosting-profile first allocation and preserves embedded/appliance
 // footprint until real concurrency asks for more.
+//
+// PT3b: per-slot metadata is a page-granular segmented SoA table allocated from
+// the PMM (freeable), not the bump heap. Each segment packs ALL per-slot fields
+// for processSegmentSlots consecutive slots into one contiguous multi-page block
+// so we do not burn one page per field per segment. Growth appends a segment
+// (no copy of live tables). Trailing empty segments return to the PMM so kernel
+// memory tracks live slots rather than the historical high-water mark.
 let kInitialProcessSlots = 64
 private let processSlotGrowChunk = 64
+// Segment size equals the growth chunk / initial capacity (power of two) so the
+// common path is one segment and each growth is exactly one PMM allocation.
+private let processSegmentSlots = 64
+private let processSegmentShift = 6
+private let processSegmentMask = 63
 private var processSlotBackingCapacity = 0
+private var processSegmentCount = 0
+private var processSegmentDirCapacity = 0
+private var processSegmentBases: UnsafeMutablePointer<UInt>! = nil
+private var processSegmentPageCounts: UnsafeMutablePointer<Int>! = nil
+// Layout offsets inside a packed segment (computed once from MemoryLayout).
+private var processOffCtx = 0
+private var processOffState = 0
+private var processOffParent = 0
+private var processOffTtbr0 = 0
+private var processOffKstack = 0
+private var processOffExit = 0
+private var processOffKilled = 0
+private var processOffWait = 0
+private var processOffBrk = 0
+private var processOffMmapTop = 0
+private var processOffThreadLeader = 0
+private var processOffFileVmas = 0
+private var processOffAnonVmaTables = 0
+private var processOffNameLen = 0
+private var processOffName = 0
+private var processOffSecurity = 0
+private var processOffIsThread = 0
+private var processOffSignalFrameActive = 0
+private var processOffSignalFrameSP = 0
+private var processOffPendingSignals = 0
+private var processOffCpuTicks = 0
+private var processOffStartTick = 0
+private var processOffResPages = 0
+private var processOffWakeTick = 0
+private var processOffHomeCpu = 0
+private var processOffRunNext = 0
+private var processOffRunQueued = 0
+private var processOffLastDispatchCpu = 0
+private var processOffDispatchCount = 0
+private var processOffDispatchCpuMask = 0
+private var processOffAddressSpaceCpuMask = 0
+private var processOffSchedulerQuiesced = 0
+private var processOffReparentedOrphan = 0
+private var processOffS5fRunAnySlots = 0
+private var processOffS5gDefaultPlacementSlots = 0
+private var processSegmentBytes = 0
+private var processSegmentPages = 0
+private var processSlotLayoutReady = false
+// Growth/shrink + full-table scanners that must not observe a half-freed
+// trailing segment. Shape matches S4 spinlocks (irq_save + CAS word).
+//
+// Protocol: any walk of processSlotRange() that dereferences per-slot storage
+// MUST hold this lock for the whole walk. Shrink lowers capacity then returns
+// segment pages to the PMM under the same lock; without it a concurrent scan
+// that already sampled the old capacity is a use-after-free (not a benign stale
+// read — the bump heap never freed, PMM-backed segments do).
+//
+// Lock order: never acquire vfsLock / futex locks while holding this lock.
+// Nested the other way is OK for short bounded scans already under vfsLock
+// (e.g. cell handle-cap checks). Never hold this lock across yield/schedule.
+// Hot-path single-slot access (scheduler, current process) names live slots in
+// non-empty segments and does not take the lock.
+private var processSlotStorageLockWord: UInt64 = 0
+private var processSlotStorageLockAcquireCount: UInt64 = 0
+private var processSlotStorageLockContentionCount: UInt64 = 0
+// Admission reserve: refuse growth that would push free physical frames below
+// this floor kept for console/init/drivers/network. 2048 frames = 8 MiB.
+// Chosen from a healthy idle + console session on QEMU virt -m 256M (idle free
+// is on the order of 10^5 frames; a few thousand cover a console session and
+// driver/network buffers with headroom without starving legitimate growth).
+private let processSlotMemoryReserveFrames = 2048
 
 // PT2a/PT3a: route all process-slot validation and full-table scans through this
 // boundary. The backing storage is now growable, so callers must never retain the
@@ -101,23 +179,46 @@ private let processSchedulerCpuSlots = 8
 private let s5cPlacementStressRounds: UInt64 = 3
 private let s5cPlacementStressCpu0TailCount: UInt64 = 2
 
-// Stable context storage for cpu_switch_context.
-private var procCtx: UnsafeMutablePointer<CPUContext>! = nil   // [processSlotCapacity()]
+// Stable context storage for cpu_switch_context. Per-process contexts live in
+// the segmented slot table (processContextPointer); only the per-CPU scheduler
+// contexts remain a separate bump-heap allocation (fixed at boot, never grown).
 private var schedCtx: UnsafeMutablePointer<CPUContext>! = nil  // [smpMaxCpuCount()]
 private var schedCtxCpuCount: UInt32 = 0
 
-// Per-process metadata (parallel arrays; not address-sensitive).
-private var pState: UnsafeMutablePointer<Int32>! = nil
-private var pParent: UnsafeMutablePointer<Int>! = nil   // parent slot, -1 = kernel
-private var pTtbr0: UnsafeMutablePointer<UInt>! = nil
-private var pKstack: UnsafeMutablePointer<UInt>! = nil // kernel stack base (2 frames), freed on reap
-private var pExit: UnsafeMutablePointer<Int>! = nil
-private var pKilled: UnsafeMutablePointer<Bool>! = nil
-private var pWait: UnsafeMutablePointer<Int>! = nil // slot waited on / waitAny
-private var pBrk: UnsafeMutablePointer<UInt>! = nil
+// Field facades over segmented SoA storage. Offsets are bound in
+// processBindFieldFacades() once the per-segment layout is known. Subscript
+// syntax preserves the old parallel-array call sites.
+private struct ProcessSlotField<T> {
+    var fieldOffset: Int = 0
+    @inline(__always)
+    subscript(slot: Int) -> T {
+        get { processSlotElemPtr(fieldOffset, slot).pointee }
+        nonmutating set { processSlotElemPtr(fieldOffset, slot).pointee = newValue }
+    }
+}
+
+private struct ProcessSlotStripeField<T> {
+    var fieldOffset: Int = 0
+    var perSlot: Int = 1
+    @inline(__always)
+    subscript(index: Int) -> T {
+        get { processSlotStripePtr(fieldOffset, perSlot, index).pointee }
+        nonmutating set { processSlotStripePtr(fieldOffset, perSlot, index).pointee = newValue }
+    }
+}
+
+// Per-process metadata facades (segmented SoA; not address-sensitive).
+private var pState = ProcessSlotField<Int32>()
+private var pParent = ProcessSlotField<Int>()   // parent slot, -1 = kernel
+private var pTtbr0 = ProcessSlotField<UInt>()
+private var pKstack = ProcessSlotField<UInt>() // kernel stack base (2 frames), freed on reap
+private var pExit = ProcessSlotField<Int>()
+private var pKilled = ProcessSlotField<Bool>()
+private var pWait = ProcessSlotField<Int>() // slot waited on / waitAny
+private var pBrk = ProcessSlotField<UInt>()
 // Track B — descending mmap cursor. Next anonymous mmap is placed just below
 // pMmapTop[slot]; it starts at userMmapTop and shrinks toward userMmapFloor.
-private var pMmapTop: UnsafeMutablePointer<UInt>! = nil
+private var pMmapTop = ProcessSlotField<UInt>()
 
 // rt-a: the mmap arena (pMmapTop), anon/file VMAs, and heap (pBrk) are properties
 // of the ADDRESS SPACE, which threads share. pThreadLeader[slot] names the slot
@@ -128,7 +229,7 @@ private var pMmapTop: UnsafeMutablePointer<UInt>! = nil
 // -1 = uninitialised → identity. The memory critical sections additionally mask
 // IRQs: processOnTick preempts at EL1, so two threads could otherwise interleave
 // inside mmap and race the cursor / page tables.
-private var pThreadLeader: UnsafeMutablePointer<Int>! = nil
+private var pThreadLeader = ProcessSlotField<Int>()
 
 func processMemLeader(_ slot: Int) -> Int {
     guard processSlotValid(slot) else { return slot }
@@ -149,7 +250,7 @@ private struct FileVma {
     var prot: Int32 = 0
 }
 private let maxFileVmas = 8
-private var pFileVmas: UnsafeMutablePointer<FileVma>! = nil
+private var pFileVmas = ProcessSlotStripeField<FileVma>(fieldOffset: 0, perSlot: 8)
 // Cumulative count of file-backed demand faults serviced (observability), and a
 // one-shot guard so the "demand paging active" marker is logged just once.
 var fileDemandFaults: UInt64 = 0
@@ -173,10 +274,10 @@ private let maxAnonVmas = 512
 // process-slot storage. A slot gets its AnonVma table only after it first creates
 // or inherits anonymous/device mmap state; processes that never mmap pay one
 // pointer, not 512 VMA records.
-private var pAnonVmaTables: UnsafeMutablePointer<UInt>! = nil
+private var pAnonVmaTables = ProcessSlotField<UInt>()
 
 private func fileVmasClear(_ slot: Int) {
-    for i in 0..<maxFileVmas { pFileVmas[slot * maxFileVmas + i].active = false }
+    for i in 0..<maxFileVmas { pFileVmas[slot * maxFileVmas + i] = FileVma() }
 }
 private func fileVmasCopy(_ dst: Int, _ src: Int) {
     for i in 0..<maxFileVmas { pFileVmas[dst * maxFileVmas + i] = pFileVmas[src * maxFileVmas + i] }
@@ -295,23 +396,23 @@ private func anonVmasUnmapRange(_ slot: Int, _ addr: UInt, _ pages: UInt) {
         }
     }
 }
-private var pNameLen: UnsafeMutablePointer<Int>! = nil
-private var pName: UnsafeMutablePointer<UInt8>! = nil
+private var pNameLen = ProcessSlotField<Int>()
+private var pName = ProcessSlotStripeField<UInt8>(fieldOffset: 0, perSlot: 16)
 // Principal / session / capability mask, plus the process's Cell tag, kept as
 // one typed record per slot (adding a Cell field is now a struct change, not a
 // new parallel array).
-private var pSecurity: UnsafeMutablePointer<ProcessSecurityContext>! = nil
+private var pSecurity = ProcessSlotField<ProcessSecurityContext>()
 // rt-a: a thread shares its creator's address space (TTBR0) instead of owning a
 // private one, so its exit must not be treated as an address-space teardown and
 // it joins via futex rather than waitpid.
-private var pIsThread: UnsafeMutablePointer<Bool>! = nil
-private var pSignalFrameActive: UnsafeMutablePointer<Bool>! = nil
-private var pSignalFrameSP: UnsafeMutablePointer<UInt>! = nil
+private var pIsThread = ProcessSlotField<Bool>()
+private var pSignalFrameActive = ProcessSlotField<Bool>()
+private var pSignalFrameSP = ProcessSlotField<UInt>()
 // HC36: per-process pending-signal bitmask (index = signo). Signals are now
 // targeted at a specific process slot (e.g. a PTY's foreground process) rather
 // than a single global foreground, and delivered when that slot next returns to
 // EL0. Dispositions/restorers remain process-global in signal.swift for now.
-private var pPendingSignals: UnsafeMutablePointer<UInt32>! = nil
+private var pPendingSignals = ProcessSlotField<UInt32>()
 
 // Accounting for /bin/top. CPU is charged one tick per timer interrupt to
 // whichever process is current (idle ticks when none is). Resident pages track
@@ -319,28 +420,28 @@ private var pPendingSignals: UnsafeMutablePointer<UInt32>! = nil
 // copies the logical count even while physical frames are shared, exec resets to
 // the new image, and sbrk adds heap growth. Start tick is systemTicks at
 // creation, for "uptime of this process".
-private var pCpuTicks: UnsafeMutablePointer<UInt64>! = nil
-private var pStartTick: UnsafeMutablePointer<UInt64>! = nil
-private var pResPages: UnsafeMutablePointer<Int>! = nil
+private var pCpuTicks = ProcessSlotField<UInt64>()
+private var pStartTick = ProcessSlotField<UInt64>()
+private var pResPages = ProcessSlotField<Int>()
 private var idleTicks: UInt64 = 0
 // nanosleep deadline (in systemTicks); 0 = not sleeping. A sleeping process
 // parks in pBlocked exactly like a futex/waitpid blocker, but only sleepers
 // carry a nonzero deadline, so the per-tick wake scan can pick them out without
 // disturbing the others.
-private var pWakeTick: UnsafeMutablePointer<UInt64>! = nil
-private var pHomeCpu: UnsafeMutablePointer<UInt32>! = nil
-private var pRunNext: UnsafeMutablePointer<Int32>! = nil
-private var pRunQueued: UnsafeMutablePointer<Bool>! = nil
-private var pLastDispatchCpu: UnsafeMutablePointer<UInt32>! = nil
-private var pDispatchCount: UnsafeMutablePointer<UInt64>! = nil
-private var pDispatchCpuMask: UnsafeMutablePointer<UInt64>! = nil
-private var pAddressSpaceCpuMask: UnsafeMutablePointer<UInt64>! = nil
-private var pSchedulerQuiesced: UnsafeMutablePointer<Bool>! = nil
+private var pWakeTick = ProcessSlotField<UInt64>()
+private var pHomeCpu = ProcessSlotField<UInt32>()
+private var pRunNext = ProcessSlotField<Int32>()
+private var pRunQueued = ProcessSlotField<Bool>()
+private var pLastDispatchCpu = ProcessSlotField<UInt32>()
+private var pDispatchCount = ProcessSlotField<UInt64>()
+private var pDispatchCpuMask = ProcessSlotField<UInt64>()
+private var pAddressSpaceCpuMask = ProcessSlotField<UInt64>()
+private var pSchedulerQuiesced = ProcessSlotField<Bool>()
 // QW3: true once a slot has been reparented to the kernel (-1) at RUNTIME because
 // its real parent was reaped while it was still live. Distinguishes a runtime
 // orphan that nobody will waitpid() (collect it in the scheduler when it exits)
 // from a process born top-level with parent -1 (its orchestrator reaps it).
-private var pReparentedOrphan: UnsafeMutablePointer<Bool>! = nil
+private var pReparentedOrphan = ProcessSlotField<Bool>()
 
 private var processRunQueueHead = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
 private var processRunQueueTail = [Int32](repeating: noProcessSlot, count: processSchedulerCpuSlots)
@@ -423,7 +524,7 @@ private var lastS5fRunAnyPolicySelectionCount: UInt64 = 0
 private var lastS5fRunAnyExitOkCount: UInt64 = 0
 private var s5fRunAnyPlacementActive = false
 private var s5fNextPlacementCpu: UInt32 = 0
-private var s5fRunAnySlots: UnsafeMutablePointer<Int>! = nil
+private var s5fRunAnySlots = ProcessSlotField<Int>()
 
 // S5g: permanent default multi-CPU EL0 placement. After the restricted S2h–S5f
 // gates prove secondary scheduling is correct, the boot path enables this once
@@ -439,7 +540,7 @@ private var lastS5gDefaultPlacementSecondaryCpuMask: UInt64 = 0
 private var lastS5gDefaultPlacementDispatchCount: UInt64 = 0
 private var lastS5gDefaultPlacementExactCpuMatchCount: UInt64 = 0
 private var lastS5gDefaultPlacementPolicySelectionCount: UInt64 = 0
-private var s5gDefaultPlacementSlots: UnsafeMutablePointer<Int>! = nil
+private var s5gDefaultPlacementSlots = ProcessSlotField<Int>()
 
 private var currentProcByCpu = [Int](repeating: -1, count: processSchedulerCpuSlots)
 private var lastReapedKilled = false
@@ -449,156 +550,363 @@ private func processDefaultSecurityContext() -> ProcessSecurityContext {
                            realPrincipal: 0, realSession: 0, realCaps: 0)
 }
 
-private func processGrowTable<T>(_ old: UnsafeMutablePointer<T>?,
-                                 oldCount: Int,
-                                 newCount: Int,
-                                 defaultValue: T) -> UnsafeMutablePointer<T>? {
-    if newCount <= 0 { return nil }
-    let bytes = MemoryLayout<T>.stride * newCount
-    guard let raw = swiftos_kernel_alloc(UInt(bytes), 16) else { return nil }
-    let next = raw.bindMemory(to: T.self, capacity: newCount)
-    var i = 0
-    if let oldTable = old {
-        while i < oldCount {
-            next[i] = oldTable[i]
-            i += 1
+@inline(__always)
+private func processSlotStorageLock() -> UInt64 {
+    let daif = irq_save()
+    var contended = false
+    while true {
+        var expected: UInt64 = 0
+        let acquired = withUnsafeMutablePointer(to: &processSlotStorageLockWord) { word in
+            smpAtomicCompareExchange(word, expected: &expected, desired: 1)
         }
+        if acquired {
+            if contended {
+                withUnsafeMutablePointer(to: &processSlotStorageLockContentionCount) { count in
+                    _ = smpAtomicFetchAdd(count, 1)
+                }
+            }
+            withUnsafeMutablePointer(to: &processSlotStorageLockAcquireCount) { count in
+                _ = smpAtomicFetchAdd(count, 1)
+            }
+            smpMemoryBarrier()
+            return daif
+        }
+        contended = true
+        smpLoadBarrier()
     }
-    while i < newCount {
-        next[i] = defaultValue
+}
+
+@inline(__always)
+private func processSlotStorageUnlock(_ daif: UInt64) {
+    smpMemoryBarrier()
+    withUnsafeMutablePointer(to: &processSlotStorageLockWord) { word in
+        smpAtomicStore(word, 0)
+    }
+    irq_restore(daif)
+}
+
+@inline(__always)
+private func processAlignUp(_ value: Int, _ alignment: Int) -> Int {
+    (value + alignment - 1) & ~(alignment - 1)
+}
+
+/// Typed pointer to element `slot` of a per-slot SoA field.
+@inline(__always)
+private func processSlotElemPtr<T>(_ fieldOffset: Int, _ slot: Int) -> UnsafeMutablePointer<T> {
+    let seg = slot >> processSegmentShift
+    let off = slot & processSegmentMask
+    let base = processSegmentBases[seg]
+    return UnsafeMutablePointer<T>(bitPattern: base + UInt(fieldOffset))!.advanced(by: off)
+}
+
+/// Typed pointer into a multi-element-per-slot stripe (FileVma rows, name bytes).
+@inline(__always)
+private func processSlotStripePtr<T>(_ fieldOffset: Int, _ perSlot: Int,
+                                     _ index: Int) -> UnsafeMutablePointer<T> {
+    let slot = index / perSlot
+    let elem = index % perSlot
+    let seg = slot >> processSegmentShift
+    let off = slot & processSegmentMask
+    let base = processSegmentBases[seg]
+    let arr = UnsafeMutablePointer<T>(bitPattern: base + UInt(fieldOffset))!
+    return arr.advanced(by: off * perSlot + elem)
+}
+
+@inline(__always)
+private func processContextPointer(_ slot: Int) -> UnsafeMutablePointer<CPUContext> {
+    processSlotElemPtr(processOffCtx, slot)
+}
+
+private func processEnsureSlotLayout() {
+    if processSlotLayoutReady { return }
+    let n = processSegmentSlots
+    var off = 0
+    func place<T>(_ type: T.Type, count: Int) -> Int {
+        let align = MemoryLayout<T>.alignment
+        let stride = MemoryLayout<T>.stride
+        off = processAlignUp(off, align)
+        let start = off
+        off += stride * count
+        return start
+    }
+    processOffCtx = place(CPUContext.self, count: n)
+    processOffState = place(Int32.self, count: n)
+    processOffParent = place(Int.self, count: n)
+    processOffTtbr0 = place(UInt.self, count: n)
+    processOffKstack = place(UInt.self, count: n)
+    processOffExit = place(Int.self, count: n)
+    processOffKilled = place(Bool.self, count: n)
+    processOffWait = place(Int.self, count: n)
+    processOffBrk = place(UInt.self, count: n)
+    processOffMmapTop = place(UInt.self, count: n)
+    processOffThreadLeader = place(Int.self, count: n)
+    processOffFileVmas = place(FileVma.self, count: n * maxFileVmas)
+    processOffAnonVmaTables = place(UInt.self, count: n)
+    processOffNameLen = place(Int.self, count: n)
+    processOffName = place(UInt8.self, count: n * procNameMax)
+    processOffSecurity = place(ProcessSecurityContext.self, count: n)
+    processOffIsThread = place(Bool.self, count: n)
+    processOffSignalFrameActive = place(Bool.self, count: n)
+    processOffSignalFrameSP = place(UInt.self, count: n)
+    processOffPendingSignals = place(UInt32.self, count: n)
+    processOffCpuTicks = place(UInt64.self, count: n)
+    processOffStartTick = place(UInt64.self, count: n)
+    processOffResPages = place(Int.self, count: n)
+    processOffWakeTick = place(UInt64.self, count: n)
+    processOffHomeCpu = place(UInt32.self, count: n)
+    processOffRunNext = place(Int32.self, count: n)
+    processOffRunQueued = place(Bool.self, count: n)
+    processOffLastDispatchCpu = place(UInt32.self, count: n)
+    processOffDispatchCount = place(UInt64.self, count: n)
+    processOffDispatchCpuMask = place(UInt64.self, count: n)
+    processOffAddressSpaceCpuMask = place(UInt64.self, count: n)
+    processOffSchedulerQuiesced = place(Bool.self, count: n)
+    processOffReparentedOrphan = place(Bool.self, count: n)
+    processOffS5fRunAnySlots = place(Int.self, count: n)
+    processOffS5gDefaultPlacementSlots = place(Int.self, count: n)
+    processSegmentBytes = processAlignUp(off, Int(PageAllocator.pageSize))
+    processSegmentPages = processSegmentBytes / Int(PageAllocator.pageSize)
+    processSlotLayoutReady = true
+}
+
+private func processBindFieldFacades() {
+    pState.fieldOffset = processOffState
+    pParent.fieldOffset = processOffParent
+    pTtbr0.fieldOffset = processOffTtbr0
+    pKstack.fieldOffset = processOffKstack
+    pExit.fieldOffset = processOffExit
+    pKilled.fieldOffset = processOffKilled
+    pWait.fieldOffset = processOffWait
+    pBrk.fieldOffset = processOffBrk
+    pMmapTop.fieldOffset = processOffMmapTop
+    pThreadLeader.fieldOffset = processOffThreadLeader
+    pFileVmas.fieldOffset = processOffFileVmas
+    pFileVmas.perSlot = maxFileVmas
+    pAnonVmaTables.fieldOffset = processOffAnonVmaTables
+    pNameLen.fieldOffset = processOffNameLen
+    pName.fieldOffset = processOffName
+    pName.perSlot = procNameMax
+    pSecurity.fieldOffset = processOffSecurity
+    pIsThread.fieldOffset = processOffIsThread
+    pSignalFrameActive.fieldOffset = processOffSignalFrameActive
+    pSignalFrameSP.fieldOffset = processOffSignalFrameSP
+    pPendingSignals.fieldOffset = processOffPendingSignals
+    pCpuTicks.fieldOffset = processOffCpuTicks
+    pStartTick.fieldOffset = processOffStartTick
+    pResPages.fieldOffset = processOffResPages
+    pWakeTick.fieldOffset = processOffWakeTick
+    pHomeCpu.fieldOffset = processOffHomeCpu
+    pRunNext.fieldOffset = processOffRunNext
+    pRunQueued.fieldOffset = processOffRunQueued
+    pLastDispatchCpu.fieldOffset = processOffLastDispatchCpu
+    pDispatchCount.fieldOffset = processOffDispatchCount
+    pDispatchCpuMask.fieldOffset = processOffDispatchCpuMask
+    pAddressSpaceCpuMask.fieldOffset = processOffAddressSpaceCpuMask
+    pSchedulerQuiesced.fieldOffset = processOffSchedulerQuiesced
+    pReparentedOrphan.fieldOffset = processOffReparentedOrphan
+    s5fRunAnySlots.fieldOffset = processOffS5fRunAnySlots
+    s5gDefaultPlacementSlots.fieldOffset = processOffS5gDefaultPlacementSlots
+}
+
+private func processZeroSegment(_ base: UInt, pages: Int) {
+    let words = UnsafeMutablePointer<UInt64>(bitPattern: base)!
+    let count = pages * Int(PageAllocator.pageSize / 8)
+    var i = 0
+    while i < count {
+        words[i] = 0
         i += 1
     }
-    return next
+}
+
+private func processInitSegmentSlots(slotBase: Int, count: Int) {
+    var i = 0
+    while i < count {
+        let slot = slotBase + i
+        processContextPointer(slot).pointee = CPUContext()
+        pState[slot] = pUnused
+        pParent[slot] = -1
+        pTtbr0[slot] = 0
+        pKstack[slot] = 0
+        pExit[slot] = 0
+        pKilled[slot] = false
+        pWait[slot] = waitNone
+        pBrk[slot] = 0
+        pMmapTop[slot] = 0
+        pThreadLeader[slot] = -1
+        pAnonVmaTables[slot] = 0
+        pNameLen[slot] = 0
+        pSecurity[slot] = processDefaultSecurityContext()
+        pIsThread[slot] = false
+        pSignalFrameActive[slot] = false
+        pSignalFrameSP[slot] = 0
+        pPendingSignals[slot] = 0
+        pCpuTicks[slot] = 0
+        pStartTick[slot] = 0
+        pResPages[slot] = 0
+        pWakeTick[slot] = 0
+        pHomeCpu[slot] = unassignedCpu
+        pRunNext[slot] = noProcessSlot
+        pRunQueued[slot] = false
+        pLastDispatchCpu[slot] = unassignedCpu
+        pDispatchCount[slot] = 0
+        pDispatchCpuMask[slot] = 0
+        pAddressSpaceCpuMask[slot] = 0
+        pSchedulerQuiesced[slot] = true
+        pReparentedOrphan[slot] = false
+        s5fRunAnySlots[slot] = -1
+        s5gDefaultPlacementSlots[slot] = -1
+        var f = 0
+        while f < maxFileVmas {
+            pFileVmas[slot * maxFileVmas + f] = FileVma()
+            f += 1
+        }
+        var c = 0
+        while c < procNameMax {
+            pName[slot * procNameMax + c] = 0
+            c += 1
+        }
+        i += 1
+    }
+}
+
+private func processEnsureSegmentDirectory(minSegments: Int) -> Bool {
+    if minSegments <= processSegmentDirCapacity { return true }
+    let newDirCap = minSegments < 4 ? 4 : minSegments
+    // Directory is tiny (one pointer + page count per segment). Bump-heap growth
+    // here is rare and linear in segment count, not quadratic in per-slot tables.
+    let baseBytes = MemoryLayout<UInt>.stride * newDirCap
+    let pageBytes = MemoryLayout<Int>.stride * newDirCap
+    guard let rawBases = swiftos_kernel_alloc(UInt(baseBytes), 16),
+          let rawPages = swiftos_kernel_alloc(UInt(pageBytes), 16) else {
+        return false
+    }
+    let nextBases = rawBases.bindMemory(to: UInt.self, capacity: newDirCap)
+    let nextPages = rawPages.bindMemory(to: Int.self, capacity: newDirCap)
+    var i = 0
+    while i < processSegmentDirCapacity {
+        nextBases[i] = processSegmentBases[i]
+        nextPages[i] = processSegmentPageCounts[i]
+        i += 1
+    }
+    while i < newDirCap {
+        nextBases[i] = 0
+        nextPages[i] = 0
+        i += 1
+    }
+    processSegmentBases = nextBases
+    processSegmentPageCounts = nextPages
+    processSegmentDirCapacity = newDirCap
+    return true
+}
+
+private func processAllocSegment() -> (UInt, Int)? {
+    processEnsureSlotLayout()
+    let pages = processSegmentPages
+    let free = pmmFreeCount()
+    if free < pages + processSlotMemoryReserveFrames {
+        klog(.info, "process", "slot growth refused: free frames below reserve",
+             UInt64(free))
+        return nil
+    }
+    let base = pmmAllocPages(pages)
+    if base == 0 {
+        klog(.info, "process", "slot growth refused: PMM contiguous alloc failed",
+             UInt64(pages))
+        return nil
+    }
+    processZeroSegment(base, pages: pages)
+    return (base, pages)
+}
+
+private func processFreeSegmentPages(base: UInt, pages: Int) {
+    if base == 0 || pages <= 0 { return }
+    var pa = base
+    var i = 0
+    while i < pages {
+        pmmFreePage(pa)
+        pa += PageAllocator.pageSize
+        i += 1
+    }
+}
+
+/// Publish capacity by appending whole PMM-backed segments. Never copies live
+/// slot storage. Caller must hold processSlotStorageLock.
+private func processInstallSlotStorageLocked(capacity newCapacity: Int) -> Bool {
+    if newCapacity <= processSlotBackingCapacity { return true }
+    processEnsureSlotLayout()
+    processBindFieldFacades()
+
+    let neededSegments = (newCapacity + processSegmentSlots - 1) / processSegmentSlots
+    if !processEnsureSegmentDirectory(minSegments: neededSegments) { return false }
+
+    while processSegmentCount < neededSegments {
+        guard let (base, pages) = processAllocSegment() else { return false }
+        let segIndex = processSegmentCount
+        processSegmentBases[segIndex] = base
+        processSegmentPageCounts[segIndex] = pages
+        smpStoreBarrier()
+        processSegmentCount = segIndex + 1
+        processBindFieldFacades()
+        processInitSegmentSlots(slotBase: segIndex * processSegmentSlots,
+                                count: processSegmentSlots)
+        smpStoreBarrier()
+    }
+
+    processSlotBackingCapacity = neededSegments * processSegmentSlots
+    smpStoreBarrier()
+    return true
 }
 
 private func processInstallSlotStorage(capacity newCapacity: Int) -> Bool {
-    let oldCapacity = processSlotBackingCapacity
-    if newCapacity <= oldCapacity { return true }
+    let daif = processSlotStorageLock()
+    defer { processSlotStorageUnlock(daif) }
+    return processInstallSlotStorageLocked(capacity: newCapacity)
+}
 
-    guard let nextProcCtx = processGrowTable(procCtx, oldCount: oldCapacity,
-                                             newCount: newCapacity,
-                                             defaultValue: CPUContext()),
-          let nextState = processGrowTable(pState, oldCount: oldCapacity,
-                                           newCount: newCapacity, defaultValue: pUnused),
-          let nextParent = processGrowTable(pParent, oldCount: oldCapacity,
-                                            newCount: newCapacity, defaultValue: -1),
-          let nextTtbr0 = processGrowTable(pTtbr0, oldCount: oldCapacity,
-                                           newCount: newCapacity, defaultValue: UInt(0)),
-          let nextKstack = processGrowTable(pKstack, oldCount: oldCapacity,
-                                            newCount: newCapacity, defaultValue: UInt(0)),
-          let nextExit = processGrowTable(pExit, oldCount: oldCapacity,
-                                          newCount: newCapacity, defaultValue: 0),
-          let nextKilled = processGrowTable(pKilled, oldCount: oldCapacity,
-                                            newCount: newCapacity, defaultValue: false),
-          let nextWait = processGrowTable(pWait, oldCount: oldCapacity,
-                                          newCount: newCapacity, defaultValue: waitNone),
-          let nextBrk = processGrowTable(pBrk, oldCount: oldCapacity,
-                                         newCount: newCapacity, defaultValue: UInt(0)),
-          let nextMmapTop = processGrowTable(pMmapTop, oldCount: oldCapacity,
-                                             newCount: newCapacity, defaultValue: UInt(0)),
-          let nextThreadLeader = processGrowTable(pThreadLeader, oldCount: oldCapacity,
-                                                  newCount: newCapacity, defaultValue: -1),
-          let nextFileVmas = processGrowTable(pFileVmas, oldCount: oldCapacity * maxFileVmas,
-                                              newCount: newCapacity * maxFileVmas,
-                                              defaultValue: FileVma()),
-          let nextAnonTables = processGrowTable(pAnonVmaTables, oldCount: oldCapacity,
-                                                newCount: newCapacity, defaultValue: UInt(0)),
-          let nextNameLen = processGrowTable(pNameLen, oldCount: oldCapacity,
-                                             newCount: newCapacity, defaultValue: 0),
-          let nextName = processGrowTable(pName, oldCount: oldCapacity * procNameMax,
-                                          newCount: newCapacity * procNameMax,
-                                          defaultValue: UInt8(0)),
-          let nextSecurity = processGrowTable(pSecurity, oldCount: oldCapacity,
-                                              newCount: newCapacity,
-                                              defaultValue: processDefaultSecurityContext()),
-          let nextIsThread = processGrowTable(pIsThread, oldCount: oldCapacity,
-                                              newCount: newCapacity, defaultValue: false),
-          let nextSignalActive = processGrowTable(pSignalFrameActive, oldCount: oldCapacity,
-                                                  newCount: newCapacity, defaultValue: false),
-          let nextSignalSP = processGrowTable(pSignalFrameSP, oldCount: oldCapacity,
-                                              newCount: newCapacity, defaultValue: UInt(0)),
-          let nextPendingSignals = processGrowTable(pPendingSignals, oldCount: oldCapacity,
-                                                    newCount: newCapacity, defaultValue: UInt32(0)),
-          let nextCpuTicks = processGrowTable(pCpuTicks, oldCount: oldCapacity,
-                                              newCount: newCapacity, defaultValue: UInt64(0)),
-          let nextStartTick = processGrowTable(pStartTick, oldCount: oldCapacity,
-                                               newCount: newCapacity, defaultValue: UInt64(0)),
-          let nextResPages = processGrowTable(pResPages, oldCount: oldCapacity,
-                                              newCount: newCapacity, defaultValue: 0),
-          let nextWakeTick = processGrowTable(pWakeTick, oldCount: oldCapacity,
-                                              newCount: newCapacity, defaultValue: UInt64(0)),
-          let nextHomeCpu = processGrowTable(pHomeCpu, oldCount: oldCapacity,
-                                             newCount: newCapacity, defaultValue: unassignedCpu),
-          let nextRunNext = processGrowTable(pRunNext, oldCount: oldCapacity,
-                                             newCount: newCapacity, defaultValue: noProcessSlot),
-          let nextRunQueued = processGrowTable(pRunQueued, oldCount: oldCapacity,
-                                               newCount: newCapacity, defaultValue: false),
-          let nextLastDispatchCpu = processGrowTable(pLastDispatchCpu, oldCount: oldCapacity,
-                                                     newCount: newCapacity,
-                                                     defaultValue: unassignedCpu),
-          let nextDispatchCount = processGrowTable(pDispatchCount, oldCount: oldCapacity,
-                                                   newCount: newCapacity, defaultValue: UInt64(0)),
-          let nextDispatchCpuMask = processGrowTable(pDispatchCpuMask, oldCount: oldCapacity,
-                                                     newCount: newCapacity, defaultValue: UInt64(0)),
-          let nextAddressSpaceCpuMask = processGrowTable(pAddressSpaceCpuMask,
-                                                         oldCount: oldCapacity,
-                                                         newCount: newCapacity,
-                                                         defaultValue: UInt64(0)),
-          let nextSchedulerQuiesced = processGrowTable(pSchedulerQuiesced,
-                                                       oldCount: oldCapacity,
-                                                       newCount: newCapacity,
-                                                       defaultValue: true),
-          let nextReparentedOrphan = processGrowTable(pReparentedOrphan,
-                                                      oldCount: oldCapacity,
-                                                      newCount: newCapacity,
-                                                      defaultValue: false),
-          let nextS5fRunAnySlots = processGrowTable(s5fRunAnySlots, oldCount: oldCapacity,
-                                                    newCount: newCapacity, defaultValue: -1),
-          let nextS5gDefaultPlacementSlots = processGrowTable(s5gDefaultPlacementSlots,
-                                                              oldCount: oldCapacity,
-                                                              newCount: newCapacity,
-                                                              defaultValue: -1)
-    else {
-        return false
+/// Free trailing segments whose slots are all unused and scheduler-quiesced.
+/// Capacity is lowered first so new processSlotRange() scanners that take the
+/// storage lock stop short of the retiring segment; the lock also excludes any
+/// scanner still mid-walk. Hot-path single-slot access only names live slots,
+/// which never live in a fully-unused trailing segment.
+///
+/// Caller must hold processSlotStorageLock (irq-masked). Freeing is deferred
+/// only until the lock is held — there is no unlocked free path.
+private func processTryShrinkSlotStorageLocked() {
+    while processSegmentCount > 1 {
+        let top = processSegmentCount - 1
+        let slotBase = top * processSegmentSlots
+        var busy = false
+        var s = 0
+        while s < processSegmentSlots {
+            let slot = slotBase + s
+            if pState[slot] != pUnused || !pSchedulerQuiesced[slot] {
+                busy = true
+                break
+            }
+            s += 1
+        }
+        if busy { break }
+
+        let newCap = top * processSegmentSlots
+        if newCap < kInitialProcessSlots { break }
+
+        processSlotBackingCapacity = newCap
+        smpStoreBarrier()
+
+        let base = processSegmentBases[top]
+        let pages = processSegmentPageCounts[top]
+        processSegmentBases[top] = 0
+        processSegmentPageCounts[top] = 0
+        processSegmentCount = top
+        smpStoreBarrier()
+        processFreeSegmentPages(base: base, pages: pages)
     }
+}
 
-    procCtx = nextProcCtx
-    pState = nextState
-    pParent = nextParent
-    pTtbr0 = nextTtbr0
-    pKstack = nextKstack
-    pExit = nextExit
-    pKilled = nextKilled
-    pWait = nextWait
-    pBrk = nextBrk
-    pMmapTop = nextMmapTop
-    pThreadLeader = nextThreadLeader
-    pFileVmas = nextFileVmas
-    pAnonVmaTables = nextAnonTables
-    pNameLen = nextNameLen
-    pName = nextName
-    pSecurity = nextSecurity
-    pIsThread = nextIsThread
-    pSignalFrameActive = nextSignalActive
-    pSignalFrameSP = nextSignalSP
-    pPendingSignals = nextPendingSignals
-    pCpuTicks = nextCpuTicks
-    pStartTick = nextStartTick
-    pResPages = nextResPages
-    pWakeTick = nextWakeTick
-    pHomeCpu = nextHomeCpu
-    pRunNext = nextRunNext
-    pRunQueued = nextRunQueued
-    pLastDispatchCpu = nextLastDispatchCpu
-    pDispatchCount = nextDispatchCount
-    pDispatchCpuMask = nextDispatchCpuMask
-    pAddressSpaceCpuMask = nextAddressSpaceCpuMask
-    pSchedulerQuiesced = nextSchedulerQuiesced
-    pReparentedOrphan = nextReparentedOrphan
-    s5fRunAnySlots = nextS5fRunAnySlots
-    s5gDefaultPlacementSlots = nextS5gDefaultPlacementSlots
-    processSlotBackingCapacity = newCapacity
-    return true
+private func processTryShrinkSlotStorage() {
+    let daif = processSlotStorageLock()
+    processTryShrinkSlotStorageLocked()
+    processSlotStorageUnlock(daif)
 }
 
 private func processNextSlotCapacity() -> Int {
@@ -641,6 +949,7 @@ func processInit() {
         }
         cpu += 1
     }
+    let initDaif = processSlotStorageLock()
     for i in processSlotRange() {
         pState[i] = pUnused
         pHomeCpu[i] = unassignedCpu
@@ -656,6 +965,7 @@ func processInit() {
         pSignalFrameSP[i] = 0
         pPendingSignals[i] = 0
     }
+    processSlotStorageUnlock(initDaif)
     for cpuSlot in 0..<processSchedulerCpuSlots {
         currentProcByCpu[cpuSlot] = -1
     }
@@ -1341,9 +1651,11 @@ private func resetLastS5fRunAnyTelemetry() {
     lastS5fRunAnyExitOkCount = 0
     s5fRunAnyPlacementActive = false
     s5fNextPlacementCpu = 0
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
         s5fRunAnySlots[slot] = -1
     }
+    processSlotStorageUnlock(daif)
 }
 
 private func processNextS5fRunAnyHomeCpu() -> UInt32 {
@@ -1591,20 +1903,28 @@ func processDispatchTelemetrySelfTest() -> Bool {
     if s5fRunAnyPlacementActive || s5fNextPlacementCpu != 0 {
         return false
     }
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
-        if s5fRunAnySlots[slot] != -1 { return false }
+        if s5fRunAnySlots[slot] != -1 {
+            processSlotStorageUnlock(daif)
+            return false
+        }
     }
+    for slot in processSlotRange() {
+        if pLastDispatchCpu[slot] != unassignedCpu ||
+           pDispatchCount[slot] != 0 ||
+           pDispatchCpuMask[slot] != 0 {
+            processSlotStorageUnlock(daif)
+            return false
+        }
+    }
+    processSlotStorageUnlock(daif)
     var cpu: UInt32 = 0
     while cpu < processRunQueueCpuCount {
         let idx = Int(cpu)
         if processDispatchTelemetryCount[idx] != 0 { return false }
         if smpPerCpuEl0SwitchCount(cpu) != 0 { return false }
         cpu += 1
-    }
-    for slot in processSlotRange() {
-        if pLastDispatchCpu[slot] != unassignedCpu { return false }
-        if pDispatchCount[slot] != 0 { return false }
-        if pDispatchCpuMask[slot] != 0 { return false }
     }
     return true
 }
@@ -1622,9 +1942,14 @@ func processSecondaryEl0GateSelfTest() -> Bool {
         if processSecondaryEl0GateAllowsCpu(cpu) { return false }
         cpu += 1
     }
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
-        if processHomeCpuForNewReadySlot(slot) != 0 { return false }
+        if processHomeCpuForNewReadySlot(slot) != 0 {
+            processSlotStorageUnlock(daif)
+            return false
+        }
     }
+    processSlotStorageUnlock(daif)
     return true
 }
 
@@ -1653,9 +1978,14 @@ func processAddressSpaceCpuMaskSelfTest() -> Bool {
         if processAddressSpaceActivationCount[Int(cpu)] != 0 { return false }
         cpu += 1
     }
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
-        if pAddressSpaceCpuMask[slot] != 0 { return false }
+        if pAddressSpaceCpuMask[slot] != 0 {
+            processSlotStorageUnlock(daif)
+            return false
+        }
     }
+    processSlotStorageUnlock(daif)
     return true
 }
 
@@ -1685,13 +2015,19 @@ func processAddressSpaceCpuMaskPostRunSelfTest() -> Bool {
     if !sawPrimaryActivation { return false }
     if platform.cpuCount > 1 && !sawSecondaryActivation { return false }
 
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
         if pState[slot] == pUnused {
-            if pAddressSpaceCpuMask[slot] != 0 { return false }
+            if pAddressSpaceCpuMask[slot] != 0 {
+                processSlotStorageUnlock(daif)
+                return false
+            }
         } else if (pAddressSpaceCpuMask[slot] & ~pDispatchCpuMask[slot]) != 0 {
+            processSlotStorageUnlock(daif)
             return false
         }
     }
+    processSlotStorageUnlock(daif)
     return true
 }
 
@@ -2301,12 +2637,15 @@ func processAddressSpaceTlbFlushFacadeSelfTest() -> Bool {
 func processAddressSpaceTlbFlushPostRunSelfTest() -> Bool {
     let primary = currentCpuId()
     if primary != 0 || !processValidSchedulerCpu(primary) { return false }
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
         if pState[slot] == pUnused { continue }
         if (processAddressSpaceActiveCpuMaskForSlot(slot) & ~pDispatchCpuMask[slot]) != 0 {
+            processSlotStorageUnlock(daif)
             return false
         }
     }
+    processSlotStorageUnlock(daif)
     return processAddressSpaceCpuMaskPostRunSelfTest()
 }
 
@@ -2346,16 +2685,23 @@ func processDispatchTelemetryNoSecondarySelfTest() -> Bool {
         return false
     }
 
+    let daif = processSlotStorageLock()
     for slot in processSlotRange() {
         if pDispatchCount[slot] == 0 {
-            if pLastDispatchCpu[slot] != unassignedCpu { return false }
-            if pDispatchCpuMask[slot] != 0 { return false }
+            if pLastDispatchCpu[slot] != unassignedCpu || pDispatchCpuMask[slot] != 0 {
+                processSlotStorageUnlock(daif)
+                return false
+            }
             continue
         }
-        if pLastDispatchCpu[slot] != primary { return false }
-        if pHomeCpu[slot] != primary { return false }
-        if pDispatchCpuMask[slot] != (UInt64(1) << Int(primary)) { return false }
+        if pLastDispatchCpu[slot] != primary ||
+           pHomeCpu[slot] != primary ||
+           pDispatchCpuMask[slot] != (UInt64(1) << Int(primary)) {
+            processSlotStorageUnlock(daif)
+            return false
+        }
     }
+    processSlotStorageUnlock(daif)
 
     var cpu: UInt32 = 0
     while cpu < processRunQueueCpuCount {
@@ -2395,12 +2741,29 @@ func packArgs(_ args: [StaticString]) -> (UInt, UInt, Int) {
 }
 
 private func allocSlot() -> Int {
-    for i in processSlotRange() where pState[i] == pUnused && pSchedulerQuiesced[i] { return i }
+    // Prefer a free slot under the storage lock so a concurrent shrink cannot
+    // retire a segment while we are about to claim a slot in it.
+    let daif = processSlotStorageLock()
+    for i in processSlotRange() where pState[i] == pUnused && pSchedulerQuiesced[i] {
+        processSlotStorageUnlock(daif)
+        return i
+    }
+    processSlotStorageUnlock(daif)
+
     let newCapacity = processNextSlotCapacity()
+    // VFS/futex tables still grow on the bump heap (small, once per capacity
+    // step). Do that outside the process storage lock to preserve lock order
+    // (never hold process storage while taking vfs/futex locks).
     if !vfsEnsureProcessCapacity(newCapacity) { return -1 }
     if !futexEnsureWaiterCapacity(newCapacity) { return -1 }
     if !processInstallSlotStorage(capacity: newCapacity) { return -1 }
-    for i in processSlotRange() where pState[i] == pUnused && pSchedulerQuiesced[i] { return i }
+
+    let daif2 = processSlotStorageLock()
+    for i in processSlotRange() where pState[i] == pUnused && pSchedulerQuiesced[i] {
+        processSlotStorageUnlock(daif2)
+        return i
+    }
+    processSlotStorageUnlock(daif2)
     return -1
 }
 
@@ -2512,7 +2875,7 @@ private func createProcess(_ image: UInt, _ size: UInt, packed: UInt, packedLen:
         return -1
     }
 
-    let ctx = procCtx.advanced(by: slot)
+    let ctx = processContextPointer(slot)
     ctx.pointee = CPUContext()
     ctx.pointee.x19 = UInt64(entry)
     ctx.pointee.x20 = UInt64(userSP)
@@ -2619,7 +2982,7 @@ private func yieldToScheduler() {
     }
     let daif = irq_save()
     let schedulerContext = schedulerContextForCurrentCpu()
-    cpu_switch_context(UnsafeMutableRawPointer(procCtx.advanced(by: current)),
+    cpu_switch_context(UnsafeMutableRawPointer(processContextPointer(current)),
                        schedulerContext)
     irq_restore(daif)
 }
@@ -2665,25 +3028,41 @@ private func reapProcess(_ slot: Int) {
     // rather than leak its zombie slot. Re-scan after every reap because reaping
     // a child can reparent (and recursively reap) its own descendants, mutating
     // pParent under us; the scan is bounded by the live-tree depth (<= slot capacity).
+    //
+    // Find one orphan under the storage lock, then drop the lock before the
+    // recursive reap (reapProcess is not re-entrant on the storage lock and may
+    // shrink). Reparent similarly holds the lock only for the table walk.
     var collected = true
     while collected {
         collected = false
+        var orphan = -1
+        let scanDaif = processSlotStorageLock()
         for i in processSlotRange()
         where pParent[i] == slot && pState[i] == pZombie && pSchedulerQuiesced[i] {
-            reapProcess(i)
+            orphan = i
+            break
+        }
+        processSlotStorageUnlock(scanDaif)
+        if orphan >= 0 {
+            reapProcess(orphan)
             collected = true
         }
     }
     // Any still-live children become kernel orphans. Flag them so a later exit is
     // collected by the in-scheduler reaper (nobody waitpid()s a -1 parent).
+    let reparentDaif = processSlotStorageLock()
     for i in processSlotRange() where pParent[i] == slot {
         pParent[i] = -1
         pReparentedOrphan[i] = true
     }
+    processSlotStorageUnlock(reparentDaif)
     pState[slot] = pUnused
     clearProcessSchedulerSlot(slot)
     pSchedulerQuiesced[slot] = true
     pReparentedOrphan[slot] = false
+    // Return trailing empty segment pages to the PMM so a fork-bomb high-water
+    // mark does not permanently pin kernel memory.
+    processTryShrinkSlotStorage()
 }
 
 // Run the scheduler until `until()` is satisfied (e.g. a target is a zombie).
@@ -2718,7 +3097,7 @@ private func schedule(until done: () -> Bool) {
         smpRecordEl0SwitchForCurrentCpu()
         let schedulerContext = schedulerContextForCurrentCpu()
         cpu_switch_context(schedulerContext,
-                           UnsafeMutableRawPointer(procCtx.advanced(by: s)))
+                           UnsafeMutableRawPointer(processContextPointer(s)))
         address_space_switch(mmu_kernel_ttbr0())
         if pState[s] == pZombie || pState[s] == pUnused {
             pSchedulerQuiesced[s] = true
@@ -2757,7 +3136,9 @@ func processRunElf(_ image: UInt, _ size: UInt, packed: UInt, packedLen: UInt, a
 /// (state != pUnused). Used by the QW3 orphan-reap self-test (no ABI surface).
 func processLiveSlotCount() -> Int {
     var n = 0
+    let daif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused { n += 1 }
+    processSlotStorageUnlock(daif)
     return n
 }
 
@@ -3249,11 +3630,11 @@ private func resetLastS5gDefaultPlacementTelemetry() {
     lastS5gDefaultPlacementDispatchCount = 0
     lastS5gDefaultPlacementExactCpuMatchCount = 0
     lastS5gDefaultPlacementPolicySelectionCount = 0
-    if s5gDefaultPlacementSlots != nil {
-        for slot in processSlotRange() {
-            s5gDefaultPlacementSlots[slot] = -1
-        }
+    let daif = processSlotStorageLock()
+    for slot in processSlotRange() {
+        s5gDefaultPlacementSlots[slot] = -1
     }
+    processSlotStorageUnlock(daif)
 }
 
 /// S5g acceptance: secondary schedulers are permanently online; briefly open
@@ -3547,7 +3928,9 @@ func processSpawnIntoCellAsync(_ cellRaw: UInt32, _ image: UInt, _ size: UInt,
                               parent: parent, inherit: .explicit,
                               inheritSpecsVA: specsVA, inheritSpecCount: specCount)
     if child < 0 { return Errno.again.code } // EAGAIN
-    pSecurity[child].cell = CellId(raw: cellRaw)
+    var childSec = pSecurity[child]
+    childSec.cell = CellId(raw: cellRaw)
+    pSecurity[child] = childSec
     // C6c: confine the child to the cell's VFS namespace root (no-op for an
     // unconfined cell). Done after createProcess seeded the child's inherited VFS
     // state, so this overrides the inherited (unconfined) root.
@@ -3593,7 +3976,7 @@ func processFork(_ frame: UnsafeMutablePointer<UInt>) -> Int {
     for i in 0..<trapFrameWords { childFrame[i] = frame[i] }
     childFrame[0] = 0 // child's fork() returns 0
 
-    let ctx = procCtx.advanced(by: child)
+    let ctx = processContextPointer(child)
     ctx.pointee = CPUContext()
     ctx.pointee.sp = UInt64(childFrameAddr)
     ctx.pointee.lr = UInt64(trap_return_addr())
@@ -3671,7 +4054,7 @@ func processThreadCreate(entryVA: UInt, argVA: UInt, stackTopVA: UInt) -> Int {
 
     // Craft a first-run context that lands in user_thread_launch_arg, which
     // installs the shared TTBR0 and eret's to entry(arg) on the given stack.
-    let ctx = procCtx.advanced(by: slot)
+    let ctx = processContextPointer(slot)
     ctx.pointee = CPUContext()
     ctx.pointee.x19 = UInt64(entryVA)             // entry PC
     ctx.pointee.x20 = UInt64(stackTopVA)          // SP_EL0
@@ -3788,11 +4171,15 @@ func processWaitpid(_ pid: Int, _ statusVA: UInt) -> Int {
     while true {
         var found = -1
         var live = 0
+        // Storage lock only for the table walk — never across reap or yield
+        // (reapProcess takes the same lock; yield re-enters the scheduler).
+        let scanDaif = processSlotStorageLock()
         for i in processSlotRange() where pState[i] != pUnused && pParent[i] == parent {
             if wantSlot != waitAny && i != wantSlot { continue }
             live += 1
             if pState[i] == pZombie && pSchedulerQuiesced[i] { found = i; break }
         }
+        processSlotStorageUnlock(scanDaif)
         if found >= 0 {
             let code = pExit[found]
             let killed = pKilled[found]
@@ -3974,34 +4361,38 @@ func processExec(image: UInt, size: UInt, packed: UInt, packedLen: UInt,
 /// SYS_psinfo: copy fixed-size process records into a caller-provided buffer.
 /// Record layout (32 bytes): pid:u32, ppid:u32, state:u32, name[20].
 func processSnapshot(buffer: UInt, capacity: UInt) -> Int {
-    var total = 0
-    let writable = capacity > UInt(processSlotCapacity()) ? processSlotCapacity() : Int(capacity)
+    // Buffer sizing may use a slightly stale capacity; the locked walk below is
+    // the authority for which slots are still mapped.
+    let sizingCap = processSlotCapacity()
+    let writable = capacity > UInt(sizingCap) ? sizingCap : Int(capacity)
+    var dst: UnsafeMutableRawPointer? = nil
     if writable > 0 {
-        guard let dst = userWritableBuffer(buffer, UInt(writable * psInfoRecordSize)) else {
+        guard let b = userWritableBuffer(buffer, UInt(writable * psInfoRecordSize)) else {
             return Errno.invalid.code
         }
-        let raw = UnsafeMutableRawPointer(dst)
-        for i in processSlotRange() where pState[i] != pUnused {
-            if total < writable {
-                let rec = raw.advanced(by: total * psInfoRecordSize)
-                let ppid = pParent[i] >= 0 ? UInt32(pParent[i] + 1) : UInt32(0)
-                rec.storeBytes(of: UInt32(i + 1), toByteOffset: 0, as: UInt32.self)
-                rec.storeBytes(of: ppid, toByteOffset: 4, as: UInt32.self)
-                rec.storeBytes(of: UInt32(bitPattern: pState[i]), toByteOffset: 8, as: UInt32.self)
-
-                let nameDst = rec.advanced(by: 12).assumingMemoryBound(to: UInt8.self)
-                var j = 0
-                let nameBase = i * procNameMax
-                while j < 20 {
-                    nameDst[j] = j < pNameLen[i] ? pName[nameBase + j] : 0
-                    j += 1
-                }
-            }
-            total += 1
-        }
-    } else {
-        for i in processSlotRange() where pState[i] != pUnused { total += 1 }
+        dst = UnsafeMutableRawPointer(b)
     }
+    var total = 0
+    let daif = processSlotStorageLock()
+    for i in processSlotRange() where pState[i] != pUnused {
+        if total < writable, let raw = dst {
+            let rec = raw.advanced(by: total * psInfoRecordSize)
+            let ppid = pParent[i] >= 0 ? UInt32(pParent[i] + 1) : UInt32(0)
+            rec.storeBytes(of: UInt32(i + 1), toByteOffset: 0, as: UInt32.self)
+            rec.storeBytes(of: ppid, toByteOffset: 4, as: UInt32.self)
+            rec.storeBytes(of: UInt32(bitPattern: pState[i]), toByteOffset: 8, as: UInt32.self)
+
+            let nameDst = rec.advanced(by: 12).assumingMemoryBound(to: UInt8.self)
+            var j = 0
+            let nameBase = i * procNameMax
+            while j < 20 {
+                nameDst[j] = j < pNameLen[i] ? pName[nameBase + j] : 0
+                j += 1
+            }
+        }
+        total += 1
+    }
+    processSlotStorageUnlock(daif)
     return total
 }
 
@@ -4009,39 +4400,41 @@ func processSnapshot(buffer: UInt, capacity: UInt) -> Int {
 /// Record layout (56 bytes, naturally aligned): pid:u32, ppid:u32, state:u32,
 /// principal:u32, cpuTicks:u64, startTick:u64, resBytes:u64, name[16].
 func processStatSnapshot(buffer: UInt, capacity: UInt) -> Int {
-    var total = 0
-    let writable = capacity > UInt(processSlotCapacity()) ? processSlotCapacity() : Int(capacity)
+    let sizingCap = processSlotCapacity()
+    let writable = capacity > UInt(sizingCap) ? sizingCap : Int(capacity)
+    var dst: UnsafeMutableRawPointer? = nil
     if writable > 0 {
-        guard let dst = userWritableBuffer(buffer, UInt(writable * procStatRecordSize)) else {
+        guard let b = userWritableBuffer(buffer, UInt(writable * procStatRecordSize)) else {
             return Errno.invalid.code
         }
-        let raw = UnsafeMutableRawPointer(dst)
-        let frameBytes = UInt64(PageAllocator.pageSize)
-        for i in processSlotRange() where pState[i] != pUnused {
-            if total < writable {
-                let rec = raw.advanced(by: total * procStatRecordSize)
-                let ppid = pParent[i] >= 0 ? UInt32(pParent[i] + 1) : UInt32(0)
-                rec.storeBytes(of: UInt32(i + 1), toByteOffset: 0, as: UInt32.self)
-                rec.storeBytes(of: ppid, toByteOffset: 4, as: UInt32.self)
-                rec.storeBytes(of: UInt32(bitPattern: pState[i]), toByteOffset: 8, as: UInt32.self)
-                rec.storeBytes(of: pSecurity[i].principal, toByteOffset: 12, as: UInt32.self)
-                rec.storeBytes(of: pCpuTicks[i], toByteOffset: 16, as: UInt64.self)
-                rec.storeBytes(of: pStartTick[i], toByteOffset: 24, as: UInt64.self)
-                rec.storeBytes(of: UInt64(pResPages[i]) * frameBytes, toByteOffset: 32, as: UInt64.self)
-
-                let nameDst = rec.advanced(by: 40).assumingMemoryBound(to: UInt8.self)
-                var j = 0
-                let nameBase = i * procNameMax
-                while j < 16 {
-                    nameDst[j] = j < pNameLen[i] ? pName[nameBase + j] : 0
-                    j += 1
-                }
-            }
-            total += 1
-        }
-    } else {
-        for i in processSlotRange() where pState[i] != pUnused { total += 1 }
+        dst = UnsafeMutableRawPointer(b)
     }
+    var total = 0
+    let frameBytes = UInt64(PageAllocator.pageSize)
+    let daif = processSlotStorageLock()
+    for i in processSlotRange() where pState[i] != pUnused {
+        if total < writable, let raw = dst {
+            let rec = raw.advanced(by: total * procStatRecordSize)
+            let ppid = pParent[i] >= 0 ? UInt32(pParent[i] + 1) : UInt32(0)
+            rec.storeBytes(of: UInt32(i + 1), toByteOffset: 0, as: UInt32.self)
+            rec.storeBytes(of: ppid, toByteOffset: 4, as: UInt32.self)
+            rec.storeBytes(of: UInt32(bitPattern: pState[i]), toByteOffset: 8, as: UInt32.self)
+            rec.storeBytes(of: pSecurity[i].principal, toByteOffset: 12, as: UInt32.self)
+            rec.storeBytes(of: pCpuTicks[i], toByteOffset: 16, as: UInt64.self)
+            rec.storeBytes(of: pStartTick[i], toByteOffset: 24, as: UInt64.self)
+            rec.storeBytes(of: UInt64(pResPages[i]) * frameBytes, toByteOffset: 32, as: UInt64.self)
+
+            let nameDst = rec.advanced(by: 40).assumingMemoryBound(to: UInt8.self)
+            var j = 0
+            let nameBase = i * procNameMax
+            while j < 16 {
+                nameDst[j] = j < pNameLen[i] ? pName[nameBase + j] : 0
+                j += 1
+            }
+        }
+        total += 1
+    }
+    processSlotStorageUnlock(daif)
     return total
 }
 
@@ -4068,12 +4461,16 @@ func processCellStat(cell rawCell: UInt32, buffer: UInt, capacity: UInt) -> Int 
     var residentPages: UInt64 = 0
     var cpuTicks: UInt64 = 0
     var handles: UInt32 = 0
+    // vfsHandleCount does not take vfsLock (reads a slot's fd table only), so
+    // nesting it under the storage lock is safe and preserves lock order.
+    let daif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == rawCell {
         processes += 1
         residentPages &+= UInt64(pResPages[i])
         cpuTicks &+= pCpuTicks[i]
         handles &+= UInt32(truncatingIfNeeded: vfsHandleCount(slot: i))
     }
+    processSlotStorageUnlock(daif)
     let raw = UnsafeMutableRawPointer(dst)
     raw.storeBytes(of: rawCell, toByteOffset: 0, as: UInt32.self)
     raw.storeBytes(of: processes, toByteOffset: 4, as: UInt32.self)
@@ -4088,9 +4485,11 @@ func processCellStat(cell rawCell: UInt32, buffer: UInt, capacity: UInt) -> Int 
 /// bounded scan keyed on the CellId tag, like processCellStat (no per-cell counter).
 func processCellResidentPages(_ cellRaw: UInt32) -> Int {
     var pages = 0
+    let daif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
         pages += pResPages[i]
     }
+    processSlotStorageUnlock(daif)
     return pages
 }
 
@@ -4128,9 +4527,13 @@ func processCellRawForSlot(_ slot: Int) -> UInt32 {
 /// summing each member's per-process handle count. No per-cell counter table.
 func processCellHandleCount(_ cellRaw: UInt32) -> Int {
     var n = 0
+    // May run nested under vfsLock (cell handle-cap checks). Storage lock is
+    // always the inner lock relative to vfsLock; never reverse that order.
+    let daif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
         n += vfsHandleCount(slot: i)
     }
+    processSlotStorageUnlock(daif)
     return n
 }
 
@@ -4138,7 +4541,9 @@ func processCellHandleCount(_ cellRaw: UInt32) -> Int {
 /// refuse teardown while any member is still running (EBUSY).
 func processCellLiveCount(_ cellRaw: UInt32) -> Int {
     var n = 0
+    let daif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw { n += 1 }
+    processSlotStorageUnlock(daif)
     return n
 }
 
@@ -4148,19 +4553,22 @@ func processCellLiveCount(_ cellRaw: UInt32) -> Int {
 /// written if the buffer was too small), or a negative errno. Authority is by the
 /// control handle (resolved by the syscall layer); this trusts the validated raw.
 func processCellPids(_ cellRaw: UInt32, buffer: UInt, capacity: UInt) -> Int {
-    let writable = capacity > UInt(processSlotCapacity()) ? processSlotCapacity() : Int(capacity)
+    let sizingCap = processSlotCapacity()
+    let writable = capacity > UInt(sizingCap) ? sizingCap : Int(capacity)
     var dst: UnsafeMutableRawPointer? = nil
     if writable > 0 {
         guard let b = userWritableBuffer(buffer, UInt(writable * 4)) else { return Errno.invalid.code }
         dst = UnsafeMutableRawPointer(b)
     }
     var total = 0
+    let daif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused && pSecurity[i].cell.raw == cellRaw {
         if total < writable, let raw = dst {
             raw.storeBytes(of: UInt32(i + 1), toByteOffset: total * 4, as: UInt32.self) // pid = slot+1
         }
         total += 1
     }
+    processSlotStorageUnlock(daif)
     return total
 }
 
@@ -4188,10 +4596,12 @@ func processSysInfo(buffer: UInt, capacity: UInt) -> Int {
 
     var total = 0
     var running = 0
+    let scanDaif = processSlotStorageLock()
     for i in processSlotRange() where pState[i] != pUnused {
         total += 1
         if pState[i] == pRunning || pState[i] == pReady { running += 1 }
     }
+    processSlotStorageUnlock(scanDaif)
 
     let frameBytes = UInt64(PageAllocator.pageSize)
     let memFree = UInt64(pmmFreeCount()) * frameBytes
@@ -4285,9 +4695,11 @@ func processLogin(principal: UInt32, session: UInt32, caps: UInt64) -> Int {
     let me = currentProcessSlot()
     guard me >= 0 else { return Errno.invalid.code }            // EINVAL
     if (pSecurity[me].caps & capConsole) == 0 { return Errno.perm.code } // EPERM
-    pSecurity[me].principal = principal
-    pSecurity[me].session = session
-    pSecurity[me].caps = caps
+    var loginSec = pSecurity[me]
+    loginSec.principal = principal
+    loginSec.session = session
+    loginSec.caps = caps
+    pSecurity[me] = loginSec
     return 0
 }
 
@@ -4305,12 +4717,14 @@ func processOnTick(fromEL0: Bool) {
     // resumes promptly on an otherwise idle system. Only nanosleep blockers carry
     // a nonzero pWakeTick, so futex/waitpid/IO blockers are left untouched.
     if cpu == 0 {
+        let slotDaif = processSlotStorageLock()
         for i in processSlotRange() where pState[i] == pBlocked && pWakeTick[i] != 0 {
             if systemTicks >= pWakeTick[i] {
                 markProcessReadyOnHomeCpu(i)
                 pWakeTick[i] = 0
             }
         }
+        processSlotStorageUnlock(slotDaif)
     }
 
     // CPU accounting for /bin/top. Charge a tick as *user* time to the running
@@ -4776,7 +5190,7 @@ func processMunmap(_ addr: UInt, _ len: UInt) -> Int {
         if !pFileVmas[idx].active { continue }
         let vBase = pFileVmas[idx].base
         let vEnd = vBase + pFileVmas[idx].pages * PageAllocator.pageSize
-        if addr < vEnd && addr + bytes > vBase { pFileVmas[idx].active = false }
+        if addr < vEnd && addr + bytes > vBase { pFileVmas[idx] = FileVma() }
     }
     // Anon VMAs split on partial munmap: V8's aligned allocator over-allocates
     // then trims the unaligned ends, and the aligned middle must stay tracked so
