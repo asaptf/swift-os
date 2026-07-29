@@ -343,7 +343,7 @@ long swiftos_getdents(int fd, void *buf, unsigned long count) {
     return __syscall3(SYS_GETDENTS, fd, (long)buf, (long)count);
 }
 
-// Kernel stat record (kernel/vfs/vfs.swift writeStatMode), 32 bytes.
+// Kernel stat record (kernel/vfs/vfs.swift writeStatMode), 48 bytes.
 struct swiftos_kstat {
     unsigned int mode;
     unsigned int uid;
@@ -351,6 +351,8 @@ struct swiftos_kstat {
     unsigned int gid;
     unsigned int nlink;
     unsigned long mtime;
+    unsigned long ino;
+    unsigned long dev;
 };
 
 int swiftos_stat(const char *path, unsigned int *mode, unsigned int *uid,

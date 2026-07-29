@@ -3094,6 +3094,11 @@ datafs-fsync-test: build $(QEMU_DTB)
 datafs-sqlite-test: build $(QEMU_DTB) base-image
 	$(RUNTEST) ./tests/datafs_sqlite_test.sh
 
+# D3 regression: autocommit create+insert on /data (no BEGIN EXCLUSIVE).
+# Guards SQLITE_READONLY_DBMOVED from unstable st_ino after the kstat identity fix.
+datafs-sqlite-autocommit-test: build $(QEMU_DTB) base-image
+	./tests/datafs_sqlite_autocommit_test.sh
+
 # V1: a second SWDATAFS disk mounts at /mnt/data1 as a distinct datafs volume,
 # isolated from /data, and both survive reboot. Boots with TWO data disks (the
 # test stamps them); the kernel mounts volume 0 = /data, volume 1 = /mnt/data1.
@@ -4055,18 +4060,62 @@ ports-nginx-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a po
 ports-sqlite-repo-fixture: $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/databases/sqlite/Port.json scripts/build-sqlite.sh
 	./scripts/build-sqlite.sh
 
+# Content-hash freshness for ported roots that embed newlib_syscalls.c.
+# File mtimes alone are not enough: Actions cache restore rewrites them, and
+# restore-keys can rehydrate an older root whose mtime looks fresher than the
+# checked-out sources. Unlike busybox (which refuses), these rebuild — make
+# already knows how, and `make build` depends on them.
+#
+# .PORT_INPUTS_FORCE re-runs expected-hash recipes every make; the stamp file is
+# rewritten only when the hash value changes. The binary recipes also depend on
+# the force target so the content check always runs (an unstamped cache hit must
+# never be silently reused).
+.PORT_INPUTS_FORCE: ;
+
+$(BUILD)/sqlite.inputs-expected: .PORT_INPUTS_FORCE | $(BUILD)/.dir
+	@./scripts/artifact-inputs-hash.sh sqlite >$@.tmp
+	@if ! cmp -s $@.tmp $@ 2>/dev/null; then mv $@.tmp $@; else rm -f $@.tmp; fi
+
+$(BUILD)/nginx.inputs-expected: .PORT_INPUTS_FORCE | $(BUILD)/.dir
+	@./scripts/artifact-inputs-hash.sh nginx >$@.tmp
+	@if ! cmp -s $@.tmp $@ 2>/dev/null; then mv $@.tmp $@; else rm -f $@.tmp; fi
+
+$(BUILD)/openssl.inputs-expected: .PORT_INPUTS_FORCE | $(BUILD)/.dir
+	@./scripts/artifact-inputs-hash.sh openssl >$@.tmp
+	@if ! cmp -s $@.tmp $@ 2>/dev/null; then mv $@.tmp $@; else rm -f $@.tmp; fi
+
 # D3: build the SQLite shell binary (and package) so it can be baked into base.img.
-# Depends on the userland runtime sources so a stubs.c change (e.g. real fsync)
-# rebuilds the shell.
-$(SQLITE_BIN): $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/databases/sqlite/Port.json scripts/build-sqlite.sh userland/compat/stubs.c userland/lib/newlib_syscalls.c userland/lib/crt0_newlib.S
+# Content stamp covers tree-owned runtime + recipe; tool prereqs are order-only
+# so a swport rebuild does not force a slow sqlite recompile when the stamp matches.
+$(SQLITE_BIN): $(BUILD)/sqlite.inputs-expected .PORT_INPUTS_FORCE $(SYSROOT)/lib/libc.a | $(SWPORT) $(SWPKG) $(PKGREPO)
+	@if [ -f $@ ] && [ -f $(BUILD)/sqlite.inputs-hash ] \
+	    && cmp -s $(BUILD)/sqlite.inputs-hash $(BUILD)/sqlite.inputs-expected; then \
+		exit 0; \
+	fi
+	@if [ -f $@ ] && [ ! -f $(BUILD)/sqlite.inputs-hash ]; then \
+		echo "sqlite is UNSTAMPED (no inputs-hash); rebuilding" >&2; \
+	elif [ -f $@ ]; then \
+		echo "sqlite is STALE (tree inputs changed since it was built); rebuilding" >&2; \
+		echo "  recorded: $$(tr -d '[:space:]' < $(BUILD)/sqlite.inputs-hash 2>/dev/null)" >&2; \
+		echo "  expected: $$(cat $(BUILD)/sqlite.inputs-expected)" >&2; \
+	fi
 	./scripts/build-sqlite.sh
 
-# W1: build the nginx server binary (+ staged config and index.html) for baking
-# into base.img. Depends on the userland runtime sources so stub changes rebuild.
 # W3: build the openssl static dev libs (and headers) for nginx TLS linking.
 # Tool prereqs are order-only so rebuilding swport/swpkg/pkgrepo does not force a
-# (slow) openssl recompile; only the recipe/script/libc actually trigger it.
-$(OPENSSL_DEV): scripts/build-openssl.sh ports/security/openssl/Port.json $(SYSROOT)/lib/libc.a userland/compat/stubs.c userland/lib/newlib_syscalls.c userland/lib/crt0_newlib.S | $(SWPORT) $(SWPKG) $(PKGREPO)
+# (slow) openssl recompile; content stamp covers runtime + recipe.
+$(OPENSSL_DEV): $(BUILD)/openssl.inputs-expected .PORT_INPUTS_FORCE $(SYSROOT)/lib/libc.a | $(SWPORT) $(SWPKG) $(PKGREPO)
+	@if [ -f $@ ] && [ -f $(BUILD)/openssl.inputs-hash ] \
+	    && cmp -s $(BUILD)/openssl.inputs-hash $(BUILD)/openssl.inputs-expected; then \
+		exit 0; \
+	fi
+	@if [ -f $@ ] && [ ! -f $(BUILD)/openssl.inputs-hash ]; then \
+		echo "openssl is UNSTAMPED (no inputs-hash); rebuilding" >&2; \
+	elif [ -f $@ ]; then \
+		echo "openssl is STALE (tree inputs changed since it was built); rebuilding" >&2; \
+		echo "  recorded: $$(tr -d '[:space:]' < $(BUILD)/openssl.inputs-hash 2>/dev/null)" >&2; \
+		echo "  expected: $$(cat $(BUILD)/openssl.inputs-expected)" >&2; \
+	fi
 	./scripts/build-openssl.sh
 
 # W3: a build-time self-signed cert for the HTTPS demo (CN=swift-os, 10y).
@@ -4074,7 +4123,20 @@ $(NGINX_CERT): | $(BUILD)/.dir
 	mkdir -p $(BUILD)/nginx-certs
 	openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj /CN=swift-os -keyout $(BUILD)/nginx-certs/server.key -out $(NGINX_CERT) >/dev/null 2>&1
 
-$(NGINX_BIN): $(OPENSSL_DEV) $(SWPORT) $(SWPKG) $(PKGREPO) $(SYSROOT)/lib/libc.a ports/www/nginx/Port.json scripts/build-nginx.sh userland/compat/stubs.c userland/lib/newlib_syscalls.c userland/lib/crt0_newlib.S
+# W1: build the nginx server binary (+ staged config and index.html) for baking
+# into base.img. Content stamp covers runtime + overlay + recipe.
+$(NGINX_BIN): $(OPENSSL_DEV) $(BUILD)/nginx.inputs-expected .PORT_INPUTS_FORCE $(SYSROOT)/lib/libc.a | $(SWPORT) $(SWPKG) $(PKGREPO)
+	@if [ -f $@ ] && [ -f $(BUILD)/nginx.inputs-hash ] \
+	    && cmp -s $(BUILD)/nginx.inputs-hash $(BUILD)/nginx.inputs-expected; then \
+		exit 0; \
+	fi
+	@if [ -f $@ ] && [ ! -f $(BUILD)/nginx.inputs-hash ]; then \
+		echo "nginx is UNSTAMPED (no inputs-hash); rebuilding" >&2; \
+	elif [ -f $@ ]; then \
+		echo "nginx is STALE (tree inputs changed since it was built); rebuilding" >&2; \
+		echo "  recorded: $$(tr -d '[:space:]' < $(BUILD)/nginx.inputs-hash 2>/dev/null)" >&2; \
+		echo "  expected: $$(cat $(BUILD)/nginx.inputs-expected)" >&2; \
+	fi
 	./scripts/build-nginx.sh
 
 # NPM26: assert the current Node.js cross-build frontier. Vanilla Node
@@ -4459,7 +4521,7 @@ busybox:
 # is not spuriously marked out of date by a no-op hash recompute.
 .BUSYBOX_INPUTS_FORCE: ;
 $(BUILD)/busybox.inputs-expected: .BUSYBOX_INPUTS_FORCE | $(BUILD)/.dir
-	@./scripts/busybox-inputs-hash.sh >$@.tmp
+	@./scripts/artifact-inputs-hash.sh busybox >$@.tmp
 	@if ! cmp -s $@.tmp $@ 2>/dev/null; then mv $@.tmp $@; else rm -f $@.tmp; fi
 
 # busybox.elf is produced by `make busybox` (slow; needs newlib + network).

@@ -64,8 +64,10 @@ fi
 
 # Presence alone is not enough: Actions restore-keys can rehydrate an older
 # busybox.elf whose mtime looks fresh. Content-stamp must match tree inputs.
+# (sqlite/nginx/openssl roots are not built here — Makefile content-stamps
+# rebuild them when make first needs the binaries.)
 if [[ -f "$ROOT/build/busybox.elf" ]] \
-    && "$ROOT/scripts/busybox-inputs-hash.sh" --check >/dev/null 2>&1; then
+    && "$ROOT/scripts/artifact-inputs-hash.sh" busybox --check >/dev/null 2>&1; then
     echo "==> ci-bootstrap: busybox.elf present and inputs-hash matches, skipping"
 else
     if [[ -f "$ROOT/build/busybox.elf" ]]; then

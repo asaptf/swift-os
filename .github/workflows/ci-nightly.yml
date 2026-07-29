@@ -33,14 +33,17 @@ jobs:
             build/busybox.elf
             build/busybox.inputs-hash
             build/nginx-root
+            build/nginx.inputs-hash
             build/sqlite-root
+            build/sqlite.inputs-hash
             build/openssl-root
+            build/openssl.inputs-hash
             build/nginx-certs
             build/swport-distfiles
-          # Include tree-owned busybox/runtime sources. restore-keys may still
-          # rehydrate an older busybox; ci-bootstrap refuses it unless
-          # build/busybox.inputs-hash matches scripts/busybox-inputs-hash.sh.
-          key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/busybox-inputs-hash.sh', 'scripts/build-nginx.sh', 'scripts/build-sqlite.sh', 'scripts/build-openssl.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**') }}
+          # Include tree-owned runtime + port recipes. restore-keys may still
+          # rehydrate older roots; Makefile refuses/rebuilds unless each
+          # build/<name>.inputs-hash matches scripts/artifact-inputs-hash.sh.
+          key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/artifact-inputs-hash.sh', 'scripts/busybox-inputs-hash.sh', 'scripts/build-nginx.sh', 'scripts/build-sqlite.sh', 'scripts/build-openssl.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**', 'userland/nginx/swiftos/**', 'ports/databases/sqlite/Port.json', 'ports/www/nginx/Port.json', 'ports/security/openssl/Port.json') }}
           restore-keys: |
             bootstrap-${{ runner.os }}-${{ runner.arch }}-
 
@@ -74,14 +77,17 @@ jobs:
             build/busybox.elf
             build/busybox.inputs-hash
             build/nginx-root
+            build/nginx.inputs-hash
             build/sqlite-root
+            build/sqlite.inputs-hash
             build/openssl-root
+            build/openssl.inputs-hash
             build/nginx-certs
             build/swport-distfiles
-          # Include tree-owned busybox/runtime sources. restore-keys may still
-          # rehydrate an older busybox; ci-bootstrap refuses it unless
-          # build/busybox.inputs-hash matches scripts/busybox-inputs-hash.sh.
-          key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/busybox-inputs-hash.sh', 'scripts/build-nginx.sh', 'scripts/build-sqlite.sh', 'scripts/build-openssl.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**') }}
+          # Include tree-owned runtime + port recipes. restore-keys may still
+          # rehydrate older roots; Makefile refuses/rebuilds unless each
+          # build/<name>.inputs-hash matches scripts/artifact-inputs-hash.sh.
+          key: bootstrap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/build-newlib.sh', 'scripts/build-busybox.sh', 'scripts/artifact-inputs-hash.sh', 'scripts/busybox-inputs-hash.sh', 'scripts/build-nginx.sh', 'scripts/build-sqlite.sh', 'scripts/build-openssl.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**', 'userland/nginx/swiftos/**', 'ports/databases/sqlite/Port.json', 'ports/www/nginx/Port.json', 'ports/security/openssl/Port.json') }}
           restore-keys: |
             bootstrap-${{ runner.os }}-${{ runner.arch }}-
 
