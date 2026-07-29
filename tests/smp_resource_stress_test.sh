@@ -13,6 +13,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=tests/lib/bootargs.sh
 source "$ROOT/tests/lib/bootargs.sh"
+SEND_CHAR_DELAY="${S4F_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${S4F_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 SMP_CPUS="${SMP_CPUS:-4}"
@@ -57,15 +61,6 @@ drive_fail() {
   exit 1
 }
 
-send_line() {
-  local line="$1" delay="${S4F_CHAR_DELAY:-0.01}" i
-  for (( i = 0; i < ${#line}; i++ )); do
-    printf '%s' "${line:i:1}" >&3
-    sleep "$delay"
-  done
-  printf '\n' >&3
-  sleep "${S4F_SEND_DELAY:-0.08}"
-}
 
 qemu_args=("$QEMU" -M virt -cpu cortex-a72 -smp "$SMP_CPUS" -m 256M -nographic -no-reboot
   -pidfile "$PIDFILE"

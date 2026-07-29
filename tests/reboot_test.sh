@@ -19,6 +19,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="${REBOOT_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${REBOOT_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 BASE="$ROOT/build/base.img"
@@ -75,12 +79,6 @@ await_count() {  # await_count MARKER COUNT [MAXSEC]
     sleep 0.1; n=$((n + 1))
   done
   return 1
-}
-send_line() {
-  local line="$1" delay="${REBOOT_CHAR_DELAY:-0.01}" i
-  for (( i = 0; i < ${#line}; i++ )); do printf '%s' "${line:i:1}" >&3; sleep "$delay"; done
-  printf '\n' >&3
-  sleep "${REBOOT_SEND_DELAY:-0.08}"
 }
 # Drive the standard boot flow (M7 tty demo -> login) to a shell as $1/$2.
 # Counts from $3: the ordinal of the M7 prompt to wait for (1 on first boot, 2 after a reboot).

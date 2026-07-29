@@ -22,6 +22,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="${CONSOLE_LOGIN_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${CONSOLE_LOGIN_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -65,12 +69,6 @@ await_count() {  # await_count MARKER COUNT [MAXSEC]
     sleep 0.1; n=$((n + 1))
   done
   return 1
-}
-send_line() {
-  local line="$1" delay="${CONSOLE_LOGIN_CHAR_DELAY:-0.01}" i
-  for (( i = 0; i < ${#line}; i++ )); do printf '%s' "${line:i:1}" >&3; sleep "$delay"; done
-  printf '\n' >&3
-  sleep "${CONSOLE_LOGIN_SEND_DELAY:-0.08}"
 }
 
 # boot_attempt: launch QEMU, drive login + the three passwd changes.

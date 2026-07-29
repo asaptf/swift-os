@@ -17,6 +17,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="${TLS_TS_CHAR_DELAY:-0.02}"
+SEND_SEND_DELAY="${TLS_TS_SEND_DELAY:-0.12}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=scripts/host-tools.sh
 source "$ROOT/scripts/host-tools.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -82,7 +86,6 @@ dtb_args=(); [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00
 await(){ local m="$1" mx="${2:-30}" n=0; while ((n<mx*10)); do grep -qF "$m" "$LOG" 2>/dev/null && return 0; sleep 0.1; n=$((n+1)); done; return 1; }
 await_count(){ local m="$1" want="$2" mx="${3:-30}" n=0 got; while ((n<mx*10)); do got="$(sed 's/\r//' "$LOG" 2>/dev/null|grep -cF "$m"||true)"; ((got>=want)) && return 0; sleep 0.1; n=$((n+1)); done; return 1; }
 require_await(){ await "$1" "$2" || { echo "FAIL: timeout: $1" >&2; sed 's/\r//' "$LOG"|tail -80 >&2; exit 1; }; }
-send_line(){ local l="$1" d="${TLS_TS_CHAR_DELAY:-0.02}" i; for ((i=0;i<${#l};i++)); do printf '%s' "${l:i:1}" >&3; sleep "$d"; done; printf '\n' >&3; sleep "${TLS_TS_SEND_DELAY:-0.12}"; }
 
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot -pidfile "$PIDFILE" \
   -global virtio-mmio.force-legacy=false "${dtb_args[@]}" \

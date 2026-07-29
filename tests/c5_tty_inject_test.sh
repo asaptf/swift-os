@@ -20,6 +20,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 SMP_CPU_COUNT="${SMP_CPUS:-4}"
 if [[ "$SMP_CPU_COUNT" -gt 1 ]]; then
@@ -64,11 +66,6 @@ fail() {
   exit 1
 }
 
-send_line() {
-  local line="$1" i
-  for (( i = 0; i < ${#line}; i++ )); do printf '%s' "${line:i:1}" >&3; sleep 0.01; done
-  printf '\n' >&3; sleep 0.08
-}
 
 # Type a word followed by Enter INTO the virtio-input device over QMP. Each arg is
 # a QEMU qcode; we append "ret". inputd must decode these and feed them to the tty.

@@ -12,6 +12,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="${RSYNC_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${RSYNC_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 QEMU="${QEMU:-qemu-system-aarch64}"
 PYTHON="${PYTHON:-python3}"
 KERNEL="$ROOT/build/kernel.elf"
@@ -90,11 +94,6 @@ await() {
   done
 }
 
-send_line() {
-  local line="$1" delay="${RSYNC_CHAR_DELAY:-0.01}" i
-  for (( i = 0; i < ${#line}; i++ )); do printf '%s' "${line:i:1}" >&3; sleep "$delay"; done
-  printf '\n' >&3; sleep "${RSYNC_SEND_DELAY:-0.08}"
-}
 
 dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")

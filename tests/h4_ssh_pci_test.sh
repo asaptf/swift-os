@@ -17,6 +17,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt-gicv3.dtb"
 BASE_DISK="$ROOT/build/base.img"
@@ -86,7 +88,6 @@ await() {
   return 1
 }
 drive_fail() { echo "FAIL: $1" >&2; echo "--- serial ---" >&2; sed 's/\r//' "$LOG" | tail -120 >&2; exit 1; }
-send_line() { local s="$1" i; for (( i=0; i<${#s}; i++ )); do printf '%s' "${s:i:1}" >&3; sleep 0.01; done; printf '\n' >&3; sleep 0.08; }
 
 ssh_common=(-F /dev/null -p "$HOST_PORT" -o BatchMode=yes -o ConnectTimeout=8
   -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$KNOWN_HOSTS" -o GlobalKnownHostsFile=/dev/null

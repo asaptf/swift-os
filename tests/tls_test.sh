@@ -25,6 +25,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="${TLS_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${TLS_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=scripts/host-tools.sh
 source "$ROOT/scripts/host-tools.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -114,15 +118,6 @@ require_await() {  # require_await MARKER [MAXSEC]
   fi
 }
 
-send_line() {
-  local line="$1" delay="${TLS_CHAR_DELAY:-0.01}" i
-  for (( i = 0; i < ${#line}; i++ )); do
-    printf '%s' "${line:i:1}" >&3
-    sleep "$delay"
-  done
-  printf '\n' >&3
-  sleep "${TLS_SEND_DELAY:-0.08}"
-}
 
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" \

@@ -16,6 +16,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=tests/lib/bootargs.sh
 source "$ROOT/tests/lib/bootargs.sh"
+SEND_CHAR_DELAY="0.005"
+SEND_SEND_DELAY="0.05"
+SEND_LINE_SETTLE="0.1"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 QEMU="${QEMU:-qemu-system-aarch64}"
@@ -79,16 +84,6 @@ drive_fail() {
   exit 1
 }
 
-send_line() {
-  local line="$1" i
-  sleep 0.1
-  for (( i = 0; i < ${#line}; i++ )); do
-    printf '%s' "${line:i:1}" >&3
-    sleep 0.005
-  done
-  printf '\n' >&3
-  sleep 0.05
-}
 
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &

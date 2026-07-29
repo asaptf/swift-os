@@ -6,6 +6,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_LINE_MODE=whole
+SEND_SEND_DELAY="${NPM_INSTALL_SEND_DELAY:-0.3}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="${NODE_DTB:-$ROOT/build/virt-2048.dtb}"
 DISK="$ROOT/build/base.img"
@@ -71,12 +75,6 @@ drive_fail() {
   echo "FAIL: $1" >&2
   sed 's/\r//' "$LOG" 2>/dev/null | tail -160 >&2 || true
   exit 1
-}
-send_line() {
-  local line="$1"
-  # Whole-line write: char-by-char typing splits on `&&` and leaves ash on `>`.
-  printf '%s\n' "$line" >&3
-  sleep "${NPM_INSTALL_SEND_DELAY:-0.3}"
 }
 
 SMP="${NODE_QEMU_SMP:-1}"

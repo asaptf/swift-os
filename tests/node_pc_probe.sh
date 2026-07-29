@@ -7,6 +7,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="${NODE_DTB:-$ROOT/build/virt-2048.dtb}"
 DISK="$ROOT/build/base.img"
@@ -30,47 +32,6 @@ dtb_args=()
 [[ -f "$DTB" ]] && dtb_args=(-device "loader,file=$DTB,addr=0x4FF00000,force-raw=on")
 
 await() { local m="$1" max="${2:-30}" n=0; while (( n < max*10 )); do grep -qF "$m" "$LOG" 2>/dev/null && return 0; sleep 0.1; n=$((n+1)); done; return 1; }
-send_line() { local line="$1" i; for (( i=0; i<${#line}; i++ )); do printf '%s' "${line:i:1}" >&3; sleep 0.01; done; printf '\n' >&3; sleep 0.08; }
-
-# sample PC via HMP monitor socket
-sample_pc() {
-python3 - "$MON" <<'PY'
-import socket,sys,time
-mon=sys.argv[1]
-for k in range(6):
-    try:
-        s=socket.socket(socket.AF_UNIX); s.connect(mon); s.settimeout(1.5)
-        time.sleep(0.05)
-        try: s.recv(65536)
-        except Exception: pass
-        s.sendall(b"info registers\n")
-        time.sleep(0.2)
-        data=b""
-        try:
-            while True:
-                d=s.recv(65536)
-                if not d: break
-                data+=d
-        except Exception: pass
-        s.close()
-        txt=data.decode("latin1")
-        pc=""
-        for line in txt.splitlines():
-            if " PC=" in line or line.strip().startswith("PC="):
-                # aarch64 HMP prints "PC=xxxxxxxx ..."
-                import re
-                m=re.search(r'PC=([0-9a-fA-Fx]+)', line)
-                if m: pc=m.group(1)
-            if "ELR_EL1" in line:
-                import re
-                m=re.search(r'ELR_EL1\s*=?\s*([0-9a-fA-Fx]+)', line)
-                if m: pc=pc+" ELR_EL1="+m.group(1)
-        print(f"sample{k}: PC={pc}")
-    except Exception as e:
-        print(f"sample{k}: ERR {e}")
-    time.sleep(0.3)
-PY
-}
 
 "$QEMU" -M virt -cpu cortex-a72 -m "$MEM" -nographic -no-reboot \
   -pidfile "$PIDFILE" -monitor "unix:$MON,server,nowait" \

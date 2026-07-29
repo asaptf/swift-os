@@ -18,6 +18,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="${SAT_CHAR_DELAY:-0.02}"
+SEND_SEND_DELAY="${SAT_SEND_DELAY:-0.12}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
@@ -75,15 +79,6 @@ drive_fail() {
   exit 1
 }
 
-send_line() {
-  local line="$1" delay="${SAT_CHAR_DELAY:-0.02}" i
-  for (( i = 0; i < ${#line}; i++ )); do
-    printf '%s' "${line:i:1}" >&3
-    sleep "$delay"
-  done
-  printf '\n' >&3
-  sleep "${SAT_SEND_DELAY:-0.12}"
-}
 
 # Device-tree blob: single-core uses virt.dtb, SMP uses virt-smp-N.dtb.
 if (( SMP_CPU_COUNT == 1 )); then

@@ -15,6 +15,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="${VI_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${VI_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -80,20 +84,6 @@ drive_fail() {
   exit 1
 }
 
-send_text() {
-  local text="$1" delay="${VI_CHAR_DELAY:-0.01}" i
-  for (( i = 0; i < ${#text}; i++ )); do
-    printf '%s' "${text:i:1}" >&3
-    sleep "$delay"
-  done
-  sleep "${VI_SEND_DELAY:-0.08}"
-}
-
-send_line() {
-  send_text "$1"
-  printf '\n' >&3
-  sleep "${VI_SEND_DELAY:-0.08}"
-}
 
 "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
   -pidfile "$PIDFILE" "${dtb_args[@]}" "${blk_args[@]}" -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
