@@ -14,12 +14,27 @@
 //      pages unaffected, so the guard is a no-op for the common case.
 // Then it releases the grower, reaps it, and destroys the cell. The boot test
 // (tests/c7_cell_pagecap_test.sh) asserts on the "C7a OK" marker.
+//
+// pageCap sizing: every process's base resident charge is ELF load pages plus
+// userStackPages (currently 512 = 2 MiB; raised for npm deep call stacks). The
+// historical pageCap=48 assumed userStackPages=16 and no longer sits above the
+// base footprint — a grower would refuse sbrk with zero growth and the cell would
+// already report residentPages >> cap. Cap is set above base with a small growth
+// window so the grower can burn through a few pages before the guard bites; if
+// the cell cap stops being enforced the grower will overshoot and this probe
+// still FAILs.
 
 private let rightRead: UInt32 = 1 << 0
 private let rightWrite: UInt32 = 1 << 1
 private let pageBytes = 4096
 private let sbrkFail = UInt(bitPattern: -1)
-private let pageCap: UInt = 48   // grower base (~20 res pages) + room to grow, then refuse
+// userStackPages (512) + small ELF (~4–16) + growth window the grower burns.
+// Must stay above base footprint or the first sbrk is refused with zero growth.
+private let pageCap: UInt = 512 + 64
+// After spawn the grower's base charge is well above zero; require the aggregate
+// to have room under the cap AND to have grown past a floor so a no-op "cap"
+// that never engages still fails (vacuity guard).
+private let minResidentAfterGrowth: UInt = 512 + 8
 
 private func putUInt(_ value: UInt) {
     if value == 0 { swiftos_putc(0x30); return }
@@ -89,7 +104,9 @@ func main(_ argc: Int32,
     var cell: UInt32 = 0
     let cellFd = swiftos_cell_create(nil, pageCap, 0, &cell)
     if cellFd < 0 || cell < 2 {
-        swiftos_puts("C7a FAIL: cell_create with a page cap failed\n")
+        swiftos_puts("C7a FAIL: cell_create with a page cap failed (rc=")
+        putUInt(UInt(bitPattern: Int(cellFd)))
+        swiftos_puts(")\n")
         return 1
     }
     swiftos_puts("C7a probe: created cell=")
@@ -114,7 +131,9 @@ func main(_ argc: Int32,
     // 2. Launch the grower into the capped cell.
     let pid = spawnGrower(cellFd: cellFd, barrierRfd: barR, signalWfd: sigW)
     if pid <= 0 {
-        swiftos_puts("C7a FAIL: cell_spawn of the grower failed\n")
+        swiftos_puts("C7a FAIL: cell_spawn of the grower failed (rc=")
+        putUInt(UInt(bitPattern: pid))
+        swiftos_puts(")\n")
         return 1
     }
     // The grower owns its own copies now; drop the ends the supervisor won't use.
@@ -122,10 +141,30 @@ func main(_ argc: Int32,
     _ = swiftos_close(sigW)
 
     // 3. Block until the grower signals it has grown to the ceiling and is capped-out.
+    //    A mute hang here was the worst failure mode: boot continues only after the
+    //    harness times out. Check the read result and the signal byte.
     var s1: UInt8 = 0
-    _ = swiftos_read(sigR, &s1, 1)
+    let rn = swiftos_read(sigR, &s1, 1)
+    if rn != 1 {
+        swiftos_puts("C7a FAIL: grower never signaled capped-out (read returned ")
+        putUInt(UInt(bitPattern: Int(rn)))
+        swiftos_puts(")\n")
+        // Still try to release/reap so we don't leak the cell for later probes.
+        _ = swiftos_close(barW)
+        var st: Int32 = 0
+        _ = swiftos_waitpid(Int32(pid), &st)
+        _ = swiftos_close(sigR)
+        _ = swiftos_cell_destroy(cellFd)
+        return 1
+    }
+    if s1 == 0 {
+        // Grower deliberately signaled failure (e.g. zero-growth sbrk refusal).
+        swiftos_puts("C7a FAIL: grower reported failure via signal byte 0\n")
+        ok = false
+    }
 
-    // 4. Sample the cell aggregate: it must NEVER exceed the cap.
+    // 4. Sample the cell aggregate: it must NEVER exceed the cap, and the grower
+    //    must have actually grown past its base footprint into the growth window.
     let resident = residentPagesIn(cell)
     swiftos_puts("C7a probe: capped member residentPages=")
     putUInt(resident)
@@ -134,8 +173,12 @@ func main(_ argc: Int32,
     swiftos_putc(0x0A)
     if resident > pageCap {
         swiftos_puts("C7a FAIL: cell residentPages exceeded the cap\n"); ok = false
-    } else if resident == 0 {
-        swiftos_puts("C7a FAIL: the grower never grew its resident set\n"); ok = false
+    } else if resident < minResidentAfterGrowth {
+        swiftos_puts("C7a FAIL: grower resident set never entered the growth window (")
+        putUInt(resident)
+        swiftos_puts(" < ")
+        putUInt(minResidentAfterGrowth)
+        swiftos_puts(")\n"); ok = false
     } else {
         swiftos_puts("C7a probe: cell residentPages within cap (intra-member cap enforced)\n")
     }
@@ -166,7 +209,11 @@ func main(_ argc: Int32,
     if globalGrew >= target {
         swiftos_puts("C7a probe: uncapped global member unaffected by the cell cap\n")
     } else {
-        swiftos_puts("C7a FAIL: uncapped global growth was refused\n"); ok = false
+        swiftos_puts("C7a FAIL: uncapped global growth was refused after ")
+        putUInt(UInt(globalGrew))
+        swiftos_puts(" pages (wanted ")
+        putUInt(UInt(target))
+        swiftos_puts(")\n"); ok = false
     }
 
     // 7. Tear the now-empty cell down.
@@ -178,5 +225,6 @@ func main(_ argc: Int32,
         swiftos_puts("C7a OK: intra-member resident-page cap enforced, uncapped growth unaffected\n")
         return 0
     }
+    swiftos_puts("C7a FAIL: probe did not reach a clean OK verdict\n")
     return 1
 }

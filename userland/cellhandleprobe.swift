@@ -121,8 +121,21 @@ func main(_ argc: Int32,
     _ = swiftos_close(sigW)
 
     // 3. Block until the opener signals it has opened to the ceiling and is capped-out.
+    //    Do not treat a short/EOF read as success — that was a mute-failure hole.
     var s1: UInt8 = 0
-    _ = swiftos_read(sigR, &s1, 1)
+    let rn = swiftos_read(sigR, &s1, 1)
+    if rn != 1 {
+        swiftos_puts("C7b FAIL: opener never signaled capped-out (read returned ")
+        // putUInt is local in this file — reuse the same helper already defined above.
+        putUInt(UInt(bitPattern: Int(rn)))
+        swiftos_puts(")\n")
+        _ = swiftos_close(barW)
+        var st: Int32 = 0
+        _ = swiftos_waitpid(Int32(pid), &st)
+        _ = swiftos_close(sigR)
+        _ = swiftos_cell_destroy(cellFd)
+        return 1
+    }
 
     // 4. Sample the cell aggregate: handles must NEVER exceed the cap.
     let held = handlesIn(cell)
