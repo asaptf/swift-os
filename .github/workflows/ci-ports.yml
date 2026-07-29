@@ -3,8 +3,14 @@
 # Weekly heavy-ports gate: ncurses, GLib, Midnight Commander, bash, zsh.
 # These embed the freestanding runtime shim and are secondary to the product
 # profile (application & AI hosting), so they are not on the daily `make test`
-# / nightly critical path. Own cache (not the bootstrap cache) so a shim change
-# does not drag GLib/MC cross-builds into every nightly miss.
+# / nightly critical path.
+#
+# Split into dependency-aware jobs so each leg can finish and write its own
+# Actions cache (a single 6h-killed job never populated cache). Groups:
+#   mc-stack — ncurses + GLib + MC
+#   bash     — bash (ncurses as build dep via Makefile)
+#   zsh      — zsh  (ncurses as build dep via Makefile)
+# Local aggregate remains `make ports-test`. See docs/TESTING_GUIDE.md.
 
 name: ci · ports
 
@@ -18,10 +24,20 @@ permissions:
   contents: read
 
 jobs:
-  ports-test:
-    name: make ports-test
+  ports:
+    name: ports · ${{ matrix.group }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: mc-stack
+            make_target: ports-mc-stack-test
+          - group: bash
+            make_target: ports-bash-test
+          - group: zsh
+            make_target: ports-zsh-test
     steps:
       - uses: actions/checkout@v4
 
@@ -42,26 +58,27 @@ jobs:
           restore-keys: |
             bootstrap-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Cache heavy port build outputs
+      # Per-group ports caches: independent path sets and keys so a finished
+      # leg writes its own cache even if another dies at the 6h limit.
+      # restore-keys may rehydrate older binaries; Makefile stamps rebuild when
+      # build/<name>.inputs-hash does not match scripts/artifact-inputs-hash.sh.
+      # hashFiles is per-step (GHA does not split a CSV matrix string into args).
+
+      - name: Cache mc-stack port build outputs
+        if: matrix.group == 'mc-stack'
         uses: actions/cache@v4
         with:
           path: |
             build/ncdemo.elf
             build/ncurses.inputs-hash
+            build/ncurses-port-work
             build/glibdemo.elf
             build/glib.inputs-hash
+            build/glib-port-work
             build/mc.elf
             build/mc-skins
             build/mc.inputs-hash
-            build/bash.elf
-            build/bash.inputs-hash
-            build/zsh.elf
-            build/zsh.inputs-hash
-            build/ncurses-port-work
-            build/glib-port-work
             build/mc-port-work
-            build/bash-port-work
-            build/zsh-port-work
             sysroot/aarch64-elf/lib/libncurses.a
             sysroot/aarch64-elf/include/curses.h
             sysroot/aarch64-elf/include/ncurses.h
@@ -70,12 +87,49 @@ jobs:
             sysroot/aarch64-elf/lib/libglib-2.0.a
             sysroot/aarch64-elf/include/glib-2.0
             sysroot/aarch64-elf/lib/glib-2.0
-          # Tree-owned runtime + port recipes. restore-keys may rehydrate older
-          # binaries; Makefile rebuilds unless each build/<name>.inputs-hash
-          # matches scripts/artifact-inputs-hash.sh.
-          key: ports-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/artifact-inputs-hash.sh', 'scripts/build-ncurses.sh', 'scripts/build-glib.sh', 'scripts/build-mc.sh', 'scripts/build-bash.sh', 'scripts/build-zsh.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**', 'userland/ncurses/**', 'userland/glib/**') }}
+          key: ports-mc-stack-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/artifact-inputs-hash.sh', 'scripts/build-ncurses.sh', 'scripts/build-glib.sh', 'scripts/build-mc.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**', 'userland/ncurses/**', 'userland/glib/**') }}
           restore-keys: |
-            ports-${{ runner.os }}-${{ runner.arch }}-
+            ports-mc-stack-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Cache bash port build outputs
+        if: matrix.group == 'bash'
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/bash.elf
+            build/bash.inputs-hash
+            build/bash-port-work
+            build/ncdemo.elf
+            build/ncurses.inputs-hash
+            build/ncurses-port-work
+            sysroot/aarch64-elf/lib/libncurses.a
+            sysroot/aarch64-elf/include/curses.h
+            sysroot/aarch64-elf/include/ncurses.h
+            sysroot/aarch64-elf/include/term.h
+            sysroot/aarch64-elf/include/unctrl.h
+          key: ports-bash-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/artifact-inputs-hash.sh', 'scripts/build-bash.sh', 'scripts/build-ncurses.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**', 'userland/ncurses/**') }}
+          restore-keys: |
+            ports-bash-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Cache zsh port build outputs
+        if: matrix.group == 'zsh'
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/zsh.elf
+            build/zsh.inputs-hash
+            build/zsh-port-work
+            build/ncdemo.elf
+            build/ncurses.inputs-hash
+            build/ncurses-port-work
+            sysroot/aarch64-elf/lib/libncurses.a
+            sysroot/aarch64-elf/include/curses.h
+            sysroot/aarch64-elf/include/ncurses.h
+            sysroot/aarch64-elf/include/term.h
+            sysroot/aarch64-elf/include/unctrl.h
+          key: ports-zsh-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('ci/toolchain.env', 'scripts/artifact-inputs-hash.sh', 'scripts/build-zsh.sh', 'scripts/build-ncurses.sh', 'userland/lib/crt0_newlib.S', 'userland/lib/newlib_syscalls.c', 'userland/user_newlib.ld', 'userland/compat/**', 'userland/ncurses/**') }}
+          restore-keys: |
+            ports-zsh-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Bootstrap sysroot, busybox, models
         run: ./scripts/ci-bootstrap.sh
@@ -85,5 +139,61 @@ jobs:
           echo "SOURCE_DATE_EPOCH=0" >> "$GITHUB_ENV"
           ./scripts/ci-export-env.sh
 
-      - name: Heavy ports gate
-        run: make ports-test
+      - name: Heavy ports gate · ${{ matrix.group }}
+        run: |
+          set -euo pipefail
+          GROUP='${{ matrix.group }}'
+          TARGET='${{ matrix.make_target }}'
+          echo "======== PORTS GROUP: ${GROUP} (make ${TARGET}) ========"
+          START=$(date +%s)
+          case "${GROUP}" in
+            mc-stack)
+              # Timed sequential builds so logs show per-port wall time, then harnesses.
+              t0=$(date +%s); make build/ncdemo.elf; echo "PORTS_TIMING port=ncdemo wall_s=$(( $(date +%s) - t0 ))"
+              t0=$(date +%s); make build/glibdemo.elf; echo "PORTS_TIMING port=glibdemo wall_s=$(( $(date +%s) - t0 ))"
+              t0=$(date +%s); make build/mc.elf; echo "PORTS_TIMING port=mc wall_s=$(( $(date +%s) - t0 ))"
+              t0=$(date +%s); make ports-mc-stack-test; echo "PORTS_TIMING phase=harnesses+pack wall_s=$(( $(date +%s) - t0 ))"
+              ;;
+            bash)
+              # ncdemo first so bash wall time is not dominated by the shared dep.
+              t0=$(date +%s); make build/ncdemo.elf; echo "PORTS_TIMING port=ncdemo wall_s=$(( $(date +%s) - t0 ))"
+              t0=$(date +%s); make build/bash.elf; echo "PORTS_TIMING port=bash wall_s=$(( $(date +%s) - t0 ))"
+              t0=$(date +%s); make ports-bash-test; echo "PORTS_TIMING phase=harnesses+pack wall_s=$(( $(date +%s) - t0 ))"
+              ;;
+            zsh)
+              t0=$(date +%s); make build/ncdemo.elf; echo "PORTS_TIMING port=ncdemo wall_s=$(( $(date +%s) - t0 ))"
+              t0=$(date +%s); make build/zsh.elf; echo "PORTS_TIMING port=zsh wall_s=$(( $(date +%s) - t0 ))"
+              t0=$(date +%s); make ports-zsh-test; echo "PORTS_TIMING phase=harnesses+pack wall_s=$(( $(date +%s) - t0 ))"
+              ;;
+            *)
+              echo "unknown ports group: ${GROUP}" >&2
+              exit 1
+              ;;
+          esac
+          WALL=$(( $(date +%s) - START ))
+          echo "PORTS_TIMING group=${GROUP} wall_s=${WALL}"
+
+  # Required-check aggregator: fails if any matrix leg failed, was cancelled
+  # (e.g. timeout), or was skipped. Matrix job result is success only when all
+  # legs succeed.
+  ports-gate:
+    name: ports-gate
+    needs: [ports]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all ports matrix legs
+        run: |
+          set -euo pipefail
+          RESULT='${{ needs.ports.result }}'
+          echo "ports matrix result: ${RESULT}"
+          case "${RESULT}" in
+            success)
+              echo "All ports groups succeeded."
+              ;;
+            *)
+              echo "ports-gate FAIL: matrix result is '${RESULT}' (need success)." >&2
+              echo "A cancelled/timeout or failed leg must fail this gate." >&2
+              exit 1
+              ;;
+          esac
