@@ -13,6 +13,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 VERSION="${RSYNC_VERSION:-3.4.1}"
 DISTFILES="${RSYNC_DISTFILES:-$ROOT/build/swport-distfiles}"
 WORK="$ROOT/build/rsync-port-work"
@@ -119,10 +121,12 @@ chmod +x "$cc_wrapper"
     # Call configure.sh directly with an in-tree srcdir to bypass the upstream
     # ./configure stub's git-branch-based prep-auto-dir build-dir dance, which
     # assumes a git checkout (we build from an extracted tarball).
+    # Already had --build; still sanitize CLICOLOR_FORCE so ac_cv_exeext stays clean.
+    autoconf_cross_prepare
     ./configure.sh \
         --srcdir=. \
         --host=aarch64-elf \
-        --build="$(./config.guess)" \
+        "$(autoconf_cross_build_arg)" \
         --prefix=/usr \
         --with-included-popt \
         --with-included-zlib \

@@ -15,6 +15,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 VERSION="${MC_VERSION:-4.8.31}"
 WORK="$ROOT/build/mc-port-work"
 SRC="$WORK/mc-${VERSION}"
@@ -114,7 +116,10 @@ perl -0pi -e 's/(\n    GError \*mcerror = NULL;\n)/$1\n    setenv ("TERM", "linu
     export PKG_CONFIG="$PKGW"
     export GLIB_CFLAGS="-I$SYSROOT/include/glib-2.0 -I$SYSROOT/lib/glib-2.0/include" GLIB_LIBS="-L$SYSROOT/lib -lglib-2.0"
     export GMODULE_CFLAGS="$GLIB_CFLAGS" GMODULE_LIBS="-L$SYSROOT/lib -lglib-2.0"
-    ./configure --host=aarch64-elf --prefix=/usr \
+    # --host alone leaves cross_compiling=maybe; AC_PROG_CC then runs a.out and
+    # hangs on same-arch Linux CI. See scripts/host-tools.sh autoconf_cross_*.
+    autoconf_cross_prepare
+    ./configure --host=aarch64-elf "$(autoconf_cross_build_arg)" --prefix=/usr \
         --with-screen=ncurses --without-x --without-subshell --without-gpm-mouse \
         --disable-vfs --disable-nls --disable-charset \
         --without-internal-edit --disable-background --disable-tests \

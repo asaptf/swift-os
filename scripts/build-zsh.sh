@@ -15,6 +15,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=scripts/host-tools.sh
+source "$ROOT/scripts/host-tools.sh"
 VERSION="${ZSH_VERSION:-5.9}"
 WORK="$ROOT/build/zsh-port-work"
 SRC="$WORK/zsh-${VERSION}"
@@ -120,7 +122,10 @@ grep -q 'swift-os: bare-env default' "$SRC/Src/main.c" \
     # code expects; force getrusage off so zsh uses the times()/struct tms path.
     export ac_cv_func_getrusage=no
 
-    ./configure --host=aarch64-elf --prefix=/usr \
+    # --host alone leaves cross_compiling=maybe; AC_PROG_CC then runs a.out and
+    # hangs on same-arch Linux CI. See scripts/host-tools.sh autoconf_cross_*.
+    autoconf_cross_prepare
+    ./configure --host=aarch64-elf "$(autoconf_cross_build_arg)" --prefix=/usr \
         --disable-dynamic \
         --disable-multibyte \
         --disable-pcre \
