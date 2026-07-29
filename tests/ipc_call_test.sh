@@ -18,6 +18,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="0.02"
+SEND_SEND_DELAY="0.1"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="${SMP_DTB:-$ROOT/build/virt-smp4.dtb}"
 DISK="$ROOT/build/base.img"
@@ -81,15 +85,6 @@ await() {  # await MARKER [MAXSEC]
   exit 1
 }
 
-send_line() {
-  local line="$1" i
-  for (( i = 0; i < ${#line}; i++ )); do
-    printf '%s' "${line:i:1}" >&3
-    sleep 0.02
-  done
-  printf '\n' >&3
-  sleep 0.1
-}
 
 # Boot and login.
 await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT"

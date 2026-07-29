@@ -24,6 +24,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="${HTTPD_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${HTTPD_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -76,15 +80,6 @@ drive_fail() {
   exit 1
 }
 
-send_line() {
-  local line="$1" delay="${HTTPD_CHAR_DELAY:-0.01}" i
-  for (( i = 0; i < ${#line}; i++ )); do
-    printf '%s' "${line:i:1}" >&3
-    sleep "$delay"
-  done
-  printf '\n' >&3
-  sleep "${HTTPD_SEND_DELAY:-0.08}"
-}
 
 base_url="http://127.0.0.1:${HOST_PORT}"
 qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot

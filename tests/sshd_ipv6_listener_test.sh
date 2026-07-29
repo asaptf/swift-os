@@ -22,6 +22,10 @@ HOST_SEED_SRC="${SSHD_HOST_SEED_SRC:-$ROOT/base/etc/ssh/ssh_host_ed25519_seed}"
 
 # shellcheck source=tests/lib/ipv6_hostfwd.sh
 source "$ROOT/tests/lib/ipv6_hostfwd.sh"
+SEND_CHAR_DELAY="${SSHD_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${SSHD_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DTB" ]]; then
@@ -131,15 +135,6 @@ drive_fail() {
   exit 1
 }
 
-send_line() {
-  local line="$1" delay="${SSHD_CHAR_DELAY:-0.01}" i
-  for (( i = 0; i < ${#line}; i++ )); do
-    printf '%s' "${line:i:1}" >&3
-    sleep "$delay"
-  done
-  printf '\n' >&3
-  sleep "${SSHD_SEND_DELAY:-0.08}"
-}
 
 "${qemu_args[@]}" <"$INFIFO" >"$LOG" 2>&1 &
 QP=$!

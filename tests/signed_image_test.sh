@@ -20,6 +20,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="${SIGNED_IMAGE_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${SIGNED_IMAGE_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -123,15 +127,6 @@ await() {  # await MARKER [MAXSEC]  (override: needs the per-boot reset above)
 ok=1
 fail() { echo "FAIL: $1" >&2; ok=0; }
 
-send_line() {
-  local line="$1" delay="${SIGNED_IMAGE_CHAR_DELAY:-0.01}" i
-  for (( i = 0; i < ${#line}; i++ )); do
-    printf '%s' "${line:i:1}" >&3
-    sleep "$delay"
-  done
-  printf '\n' >&3
-  sleep "${SIGNED_IMAGE_SEND_DELAY:-0.08}"
-}
 
 # Drive the boot demo past the interactive ttydemo to a root shell.
 to_shell() {

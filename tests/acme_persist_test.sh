@@ -19,6 +19,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="${ACME_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${ACME_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 # shellcheck source=scripts/host-tools.sh
 source "$ROOT/scripts/host-tools.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -78,30 +82,6 @@ dtb_args=()
 await() { local marker="$1" max="${2:-30}" log="$3" n=0
   while (( n < max * 10 )); do grep -qF "$marker" "$log" 2>/dev/null && return 0; sleep 0.1; n=$((n + 1)); done
   return 1; }
-send_line() { local line="$1" delay="${ACME_CHAR_DELAY:-0.01}" i
-  for (( i = 0; i < ${#line}; i++ )); do printf '%s' "${line:i:1}" >&3; sleep "$delay"; done
-  printf '\n' >&3; sleep "${ACME_SEND_DELAY:-0.08}"; }
-
-# Boot, log in, leave fd 3 open on the guest console. $1=log
-boot_and_login() {
-  local log="$1"
-  "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-    -pidfile "$PIDFILE" -global virtio-mmio.force-legacy=false \
-    "${dtb_args[@]}" \
-    -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-    -device virtio-blk-device,drive=swosbase \
-    -drive "file=$DATA_IMG,format=raw,if=none,id=swosdata" \
-    -device virtio-blk-device,drive=swosdata \
-    -netdev user,id=n0 -device virtio-net-device,netdev=n0 \
-    -kernel "$KERNEL" <"$INFIFO" >"$log" 2>&1 &
-  QP=$!
-  exec 3<>"$INFIFO"
-  await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" "$log" || return 1; send_line 'tty-line'
-  await "M7 tty: running; press Ctrl-C" 40 "$log" || return 1; printf '\003' >&3
-  await "swift-os login:" 40 "$log" || return 1; send_line 'root'
-  await "Password:" 30 "$log" || return 1; send_line 'swordfish'
-  await "M12c: shell ready" 60 "$log" || return 1
-}
 
 # --insecure: this test targets a self-signed mock and checks persistence, not TLS
 # trust; cert verification (now on by default) is covered by acme_verify_test.sh.

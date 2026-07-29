@@ -23,6 +23,10 @@ HELLO_MARK="hello from the swift-os static file server"
 
 # shellcheck source=tests/lib/ipv6_hostfwd.sh
 source "$ROOT/tests/lib/ipv6_hostfwd.sh"
+SEND_CHAR_DELAY="${HTTPD_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${HTTPD_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 if [[ ! -f "$DISK" ]]; then
@@ -84,15 +88,6 @@ drive_fail() {
   exit 1
 }
 
-send_line() {
-  local line="$1" delay="${HTTPD_CHAR_DELAY:-0.01}" i
-  for (( i = 0; i < ${#line}; i++ )); do
-    printf '%s' "${line:i:1}" >&3
-    sleep "$delay"
-  done
-  printf '\n' >&3
-  sleep "${HTTPD_SEND_DELAY:-0.08}"
-}
 
 # Boot QEMU driven via FIFO (fd 3) for reactive input.
 netdev_arg="user,id=n0,hostfwd=tcp:127.0.0.1:${HOST_PORT}-:8080"

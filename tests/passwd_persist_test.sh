@@ -15,6 +15,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="${CONSOLE_LOGIN_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${CONSOLE_LOGIN_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 DISK="$ROOT/build/base.img"
@@ -47,23 +51,6 @@ trap 'cleanup_boot; rm -rf "$WORK" 2>/dev/null || true' EXIT
 
 await() { local m="$1" max="${2:-30}" n=0; while (( n < max*10 )); do grep -qF "$m" "$LOG" 2>/dev/null && return 0; sleep 0.1; n=$((n+1)); done; return 1; }
 await_count() { local m="$1" want="$2" max="${3:-30}" n=0 got=0; while (( n < max*10 )); do got="$(grep -cF "$m" "$LOG" 2>/dev/null || true)"; (( got >= want )) && return 0; sleep 0.1; n=$((n+1)); done; return 1; }
-send_line() { local line="$1" d="${CONSOLE_LOGIN_CHAR_DELAY:-0.01}" i; for (( i=0; i<${#line}; i++ )); do printf '%s' "${line:i:1}" >&3; sleep "$d"; done; printf '\n' >&3; sleep "${CONSOLE_LOGIN_SEND_DELAY:-0.08}"; }
-
-launch() {  # start a fresh QEMU sharing DATA_IMG
-  LOG="$WORK/boot.log"; : >"$LOG"
-  PIDFILE="$(mktemp -t swiftos-persist-pid.XXXXXX)"
-  INFIFO="$(mktemp -u -t swiftos-persist-in.XXXXXX)"; mkfifo "$INFIFO"; QP=""
-  "$QEMU" -M virt -cpu cortex-a72 -m 256M -nographic -no-reboot \
-    -pidfile "$PIDFILE" -global virtio-mmio.force-legacy=false \
-    ${dtb_args[@]+"${dtb_args[@]}"} \
-    -drive "file=$DISK,format=raw,if=none,id=swosbase,readonly=on" \
-    -device virtio-blk-device,drive=swosbase \
-    -drive "file=$DATA_IMG,format=raw,if=none,id=swosdata" \
-    -device virtio-blk-device,drive=swosdata \
-    -kernel "$KERNEL" <"$INFIFO" >"$LOG" 2>&1 &
-  QP=$!
-  exec 3<>"$INFIFO"
-}
 
 reach_login() {  # drive past the boot tty probe to the first login prompt; 2 = boot failed
   await "M7 tty: type a line then Enter" "$DEMO_BOOT_TIMEOUT" || return 2

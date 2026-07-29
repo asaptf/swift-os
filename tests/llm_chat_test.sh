@@ -20,6 +20,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="${SLEEP_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${SLEEP_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 # The kernel sizes RAM from the DTB's /memory node, so the inference profile
 # needs a DTB that advertises the larger window (the 2 GiB one) to match -m;
@@ -71,12 +75,6 @@ drive_fail() {
   echo "--- serial ---" >&2
   sed 's/\r//' "$LOG" 2>/dev/null | tail -50 >&2 || true
   exit 1
-}
-send_line() {
-  local line="$1" delay="${SLEEP_CHAR_DELAY:-0.01}" i
-  for (( i = 0; i < ${#line}; i++ )); do printf '%s' "${line:i:1}" >&3; sleep "$delay"; done
-  printf '\n' >&3
-  sleep "${SLEEP_SEND_DELAY:-0.08}"
 }
 
 qemu_args=("$QEMU" -M virt -cpu cortex-a72 -m "$INFER_MEM" -nographic -no-reboot

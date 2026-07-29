@@ -5,6 +5,10 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=tests/lib/timeouts.sh
 source "$ROOT/tests/lib/timeouts.sh"
+SEND_CHAR_DELAY="${PKG_REPO_CHAR_DELAY:-0.01}"
+SEND_SEND_DELAY="${PKG_REPO_SEND_DELAY:-0.08}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DTB="$ROOT/build/virt.dtb"
 BASE_DISK="$ROOT/build/base.img"
@@ -86,15 +90,6 @@ drive_fail() {
   exit 1
 }
 
-send_line() {
-  local line="$1" delay="${PKG_REPO_CHAR_DELAY:-0.01}" i
-  for (( i = 0; i < ${#line}; i++ )); do
-    printf '%s' "${line:i:1}" >&3
-    sleep "$delay"
-  done
-  printf '\n' >&3
-  sleep "${PKG_REPO_SEND_DELAY:-0.08}"
-}
 
 dtb_args=()
 if [[ -f "$DTB" ]]; then

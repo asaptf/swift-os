@@ -11,6 +11,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=tests/lib/bootargs.sh
 source "$ROOT/tests/lib/bootargs.sh"
+SEND_CHAR_DELAY="${S4F_CHAR_DELAY:-0.02}"
+SEND_SEND_DELAY="${S4F_SEND_DELAY:-0.12}"
+# shellcheck source=tests/lib/send_line.sh
+source "$ROOT/tests/lib/send_line.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
@@ -77,15 +81,6 @@ drive_fail() {
   exit 1
 }
 
-send_line() {
-  local line="$1" delay="${S4F_CHAR_DELAY:-0.02}" i
-  for (( i = 0; i < ${#line}; i++ )); do
-    printf '%s' "${line:i:1}" >&3
-    sleep "$delay"
-  done
-  printf '\n' >&3
-  sleep "${S4F_SEND_DELAY:-0.12}"
-}
 
 DTB="${SMP_DTB:-$ROOT/build/virt-smp-${SMP_CPU_COUNT}.dtb}"
 if [[ -z "${SMP_DTB:-}" ]]; then
