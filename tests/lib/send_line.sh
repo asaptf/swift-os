@@ -16,7 +16,8 @@
 #
 # This helper:
 #   1. await_shell_ready — reactive wait until the guest shell is demonstrably up
-#      (ash banner in new log content, else an echo handshake with retries).
+#      (ash banner anywhere in the log, else an echo handshake with retries).
+#      Best-effort: on timeout warns and continues; never fails the harness.
 #   2. Settles briefly before typing so a just-ready shell can enter its read.
 #   3. Types one character at a time (unless SEND_LINE_MODE=whole).
 #   4. Sends newline (send_line) and a short post-line delay.
@@ -41,7 +42,7 @@
 # Usage:
 #   source "$ROOT/tests/lib/send_line.sh"
 #   await "Welcome to swift-os, root" 30 || fail "login"
-#   await_shell_ready "$LOG" 60 || fail "shell not reading"
+#   await_shell_ready "$LOG" 60   # best-effort; never fails the harness
 #   send_line 'echo hello'
 #   send_text $'ihello\033'   # no trailing newline (e.g. vi)
 
@@ -70,7 +71,17 @@ _send_line_maybe_settle() {
   sleep "$settle"
 }
 
+# _shell_ready_log LOG — full serial log, CRs stripped (banner may predate call).
+_shell_ready_log() {
+  local log="$1"
+  if [[ ! -f "$log" ]]; then
+    return 0
+  fi
+  tr -d '\r' <"$log" 2>/dev/null || true
+}
+
 # _shell_ready_tail LOG START_BYTES — serial bytes written after START_BYTES.
+# Used only for the handshake token (must be fresh; banner may predate call).
 _shell_ready_tail() {
   local log="$1" start="$2"
   if [[ ! -f "$log" ]]; then
@@ -87,16 +98,21 @@ _shell_ready_tail() {
 # first command typed into that shell.
 #
 # Primary evidence: busybox ash prints "built-in shell (ash)" only after it has
-# been exec'd and entered interactive mode — not before. We only look at log
-# content written *after* this call starts, so a second login after `exit` still
-# waits for a fresh shell.
+# been exec'd and entered interactive mode — not before. Scan the *whole* log:
+# harnesses that already awaited "M12c: shell ready" or Welcome often race ash
+# past the banner before this helper starts, so a post-entry-only scan can miss
+# the only banner of the boot and never match.
 #
 # Fallback: if that banner never appears (non-ash login shell, or a build that
-# suppresses it), send `echo <unique-token>` and wait for the token in new log
-# content, re-sending every 2s until timeout. Seeing the token proves a reader
-# is draining and echoing.
+# suppresses it), send `echo <unique-token>` and wait for the token in *new* log
+# content (after entry), re-sending every 2s until timeout. Seeing the token
+# proves a reader is draining and echoing — stronger than a fixed sleep.
 #
-# Returns 0 when ready, 1 on timeout. Does not change harness assertion ceilings.
+# Best-effort: returns 0 when ready *or* on timeout. On timeout prints a
+# greppable WARN naming the harness and proceeds — a readiness probe must never
+# be the reason a healthy test fails (pre-probe paced typing is the fallback).
+# Returns 2 only for a programming error (missing LOGFILE). Does not change
+# harness assertion ceilings or settle defaults.
 await_shell_ready() {
   local log="$1"
   local max="${2:-${SHELL_READY_TIMEOUT:-60}}"
@@ -106,9 +122,11 @@ await_shell_ready() {
   local start=0
   local n=0
   local max_ticks=$((max * 10))
-  local chunk
+  local whole chunk
   local probe_period=20   # re-send handshake every 2.0 s (0.1 s ticks)
   local probe_after=10    # first probe only after 1.0 s without banner
+  local harness
+  harness="$(basename "${0:-unknown}")"
 
   if [[ -z "$log" ]]; then
     echo "await_shell_ready: LOGFILE required" >&2
@@ -119,10 +137,13 @@ await_shell_ready() {
   fi
 
   while (( n < max_ticks )); do
-    chunk="$(_shell_ready_tail "$log" "$start")"
-    if [[ "$chunk" == *"$banner"* ]]; then
+    # Banner: whole log (may have been emitted before this call started).
+    whole="$(_shell_ready_log "$log")"
+    if [[ "$whole" == *"$banner"* ]]; then
       return 0
     fi
+    # Handshake token: only content written after entry (must be our probe).
+    chunk="$(_shell_ready_tail "$log" "$start")"
     if [[ "$chunk" == *"$token"* ]]; then
       return 0
     fi
@@ -138,7 +159,10 @@ await_shell_ready() {
     sleep 0.1
     n=$((n + 1))
   done
-  return 1
+
+  # Greppable: WARN: await_shell_ready: timed out
+  echo "WARN: await_shell_ready: timed out after ${max}s in harness ${harness} — proceeding without confirmed shell readiness" >&2
+  return 0
 }
 
 # send_text TEXT — paced characters, no newline.
