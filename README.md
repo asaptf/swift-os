@@ -185,6 +185,9 @@ operators, AI hosting operators, support engineers, and security reviewers.
   and attach QEMU networking.
 - [Concepts](docs/CONCEPTS.md): core SwiftOS terms, images, filesystem,
   identity, packages, services, testing, and roadmap boundaries.
+- [Agent-Operated Workflow](docs/AGENT_WORKFLOW.md): the positioning note for
+  autonomous agents as operators — the four substrate properties, the scope
+  limits, and the benchmark still to be run.
 - [Installation Guide](docs/INSTALLATION_GUIDE.md): choose and verify direct
   QEMU, UEFI/GPT, graphical smoke, and VirtualBox ARM boot profiles.
 - [Deployment Guide](docs/DEPLOYMENT_GUIDE.md): prepare, validate, hand off,
