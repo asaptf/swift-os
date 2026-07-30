@@ -23,6 +23,7 @@ that make the claim concrete.
 | Does a feature need ambient root authority? | Prefer explicit capabilities, handle rights, and scoped delegation | [Security Guide](SECURITY_GUIDE.md), [Capabilities](CAPABILITIES.md) | Capability/handle test evidence and support bundle |
 | Is broader compatibility worth added legacy surface? | Only when the compatibility layer is narrow, isolated, useful, and tested | [API Reference](API_REFERENCE.md), [Application Cookbook](APPLICATION_COOKBOOK.md) | API verification map plus source-port or app test |
 | Is a future profile ready to advertise? | Advertise only checked behavior; label roadmap work as roadmap work | [Release Notes](RELEASE_NOTES.md), [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md) | Release validation matrix and current known-limits list |
+| Is this feature legible to an automated operator? | Prefer a definite machine-readable verdict — structured output, honest exit codes, readiness as an oracle — over human-formatted text a caller must scrape | [Agent-Operated Workflow](AGENT_WORKFLOW.md), [Observability Guide](OBSERVABILITY_GUIDE.md) | A check that consumes the output programmatically, with no timed sleep |
 
 ## Core priorities
 
@@ -45,6 +46,34 @@ decides otherwise.
 7. **Modular, but not fragmented.** Keep clear ownership boundaries between architecture code, memory
    management, scheduler, VFS, drivers, runtime support, and userland services. Modularity must make the
    system easier to reason about, not add needless indirection.
+
+## Who operates the system
+
+The hosting profile assumes a second kind of operator beside the human
+administrator: an **autonomous agent** that writes an application, deploys it,
+verifies it, and iterates without a human in each cycle. This is a distinct
+meaning of "AI" from the flagship AI *workload* (serving models, see
+[AI Hosting Guide](AI_HOSTING_GUIDE.md)), and the two should not be conflated.
+
+The stance, recorded in full in
+[Agent-Operated Workflow](AGENT_WORKFLOW.md): an automated operator needs a
+substrate that is deterministic, disposable, safely isolated, and
+machine-legible. Those are the properties the immutable signed base, Cells, and
+capability-scoped authority already provide for hosting — the claim is that they
+are the same properties, not that agents need new machinery. Speed matters, but
+it is one property of four and not the first: a fast environment an agent cannot
+trust or cannot interrogate is worth less than a slower one it can.
+
+Two guardrails keep this from becoming a slogan:
+
+- **It is a hypothesis until measured.** No latency or cost advantage may be
+  advertised before the benchmark in that note has been run against container
+  baselines. This is the same rule as any other unverified profile claim.
+- **It does not reopen the compatibility stance.** The absence of a Linux ABI is
+  a real headwind for this positioning — portability is precisely what makes the
+  incumbent stacks attractive to an agent — and the answer is to scope the claim
+  to applications built against our own ABI, never to add OCI or Linux
+  compatibility to serve it.
 
 ## Swift as a systems language
 

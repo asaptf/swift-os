@@ -1,15 +1,16 @@
 # SwiftCube Design Note
 
-> **Design note — RECORD ONLY. Not a Phase-1 item.** This records the agreed
-> v1 design for SwiftCube, a Swift-native cluster orchestrator for fleets of
-> SwiftOS machines. No kernel or userland code is scheduled by this note. The
-> active plan remains Phase 1 in
-> [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md) — complete the
-> capability/handle model (the C-arc), deliver SMP, move drivers toward
-> restartable userland services. SwiftCube's data plane depends on that work
-> reaching the Cell supervisor (C6); see "Dependencies" below. The SwiftCube
-> milestone ladder (SC0–SC9) would be scheduled as its own track once the
-> prerequisites land.
+> **Design note — the v1 design, now partly built.** This records the agreed v1
+> design for SwiftCube, a Swift-native cluster orchestrator for fleets of
+> SwiftOS machines. The ladder below (SC0–SC9b) has landed as its own track and
+> is covered host-side by `make swiftcube-test`; `sctld` and `slet` are staged
+> into the base image. **The on-device data plane is not finished:** the C6
+> adapter (`swiftcube/cell/C6Adapter.swift`) reports `.unavailable` instead of
+> creating a Cell, so no instance has yet been started on a machine through the
+> orchestrator, and the SC3 QEMU end-to-end gate is deferred, not claimed.
+> Treat every performance statement here as design intent until that path runs.
+> The active plan remains Phase 1 in
+> [Risk Remediation Roadmap](RISK_REMEDIATION_ROADMAP.md).
 
 SwiftCube is a simplified-but-complete analogue of Kubernetes: a small,
 Swift-everywhere control plane that schedules applications onto SwiftOS nodes,
@@ -43,6 +44,17 @@ Kubernetes": **instance = Cell**, not a process and not a Linux container.
 **Scope decision (v1): nodes are SwiftOS only.** Generic-Linux nodes are
 explicitly out of scope for v1, because the speed and footprint thesis depends
 on the Cell substrate.
+
+**Speed is the means, not the property.** What the missing container abstraction
+actually buys is a *disposable* environment: cheap enough to create one per test
+and destroy it afterwards, with an identity (image digest plus manifest
+revision) that a caller can compare by hash instead of by inspection. That
+matters most for an automated operator — an agent deploying and verifying its
+own code — which is why the orchestrator's readiness verdicts and status
+surfaces are a product feature and not just operator convenience. See
+[Agent-Operated Workflow](AGENT_WORKFLOW.md) for that positioning, its scope
+limits, and the benchmark that has to be run before any latency advantage is
+advertised.
 
 ## 2. Components and naming
 
@@ -239,12 +251,14 @@ workflow.
 | SC8 | node-local sticky PV on datafs + fencing | `/data` survives restart; instance pinned to node | datafs |
 | SC9 | sctl CLI + manifest parser + rollout state machine | end-to-end on QEMU `-smp`, multi-node | all of the above |
 
-**Dependencies.** SC0–SC2 and SC4 are decoupled from the in-flight kernel work
-(they are networking and storage on existing primitives) and can proceed in
-parallel with the roadmap. SC3 and everything downstream are gated on the kernel
-reaching the C-arc, specifically C6 (the userland Cell supervisor): the data
-plane spawns isolated, capability-scoped, accounted Cells, which is exactly what
-C6 delivers.
+**Dependencies.** SC0–SC2 and SC4 were decoupled from the kernel work (they are
+networking and storage on existing primitives). SC3's kernel dependency is now
+satisfied — the C-arc landed, and cells are created, spawned into, enumerated,
+and destroyed by syscall (see [Capabilities](CAPABILITIES.md) §6). What remains
+is the orchestrator half: mapping a `CellSpec` onto those syscalls in the C6
+adapter, and the QEMU end-to-end gate over it. Everything downstream of SC3 is
+implemented against the supervisor seam and does not change when that wiring
+lands.
 
 ## 12. Placement in the repository
 
