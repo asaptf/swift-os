@@ -14,13 +14,16 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=tests/lib/bootargs.sh
 source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 SMP_CPUS="${SMP_CPUS:-4}"
-TIMEOUT="${TIMEOUT:-150}"
+# First await covers SMPRACE markers mid demo sequence (role = DEMO_BOOT_TIMEOUT).
+# Override via DEMO_BOOT_TIMEOUT or legacy TIMEOUT. Later S4e await stays tight.
 
 if [[ ! "$SMP_CPUS" =~ ^[0-9]+$ ]] || (( 10#$SMP_CPUS < 1 )); then
   echo "FAIL: SMP_CPUS must be a positive integer, got '$SMP_CPUS'." >&2
@@ -96,14 +99,15 @@ bake_selftest_dtb "$DTB" "${SELFTEST_DTB:-}" || exit 2
 QP=$!
 
 rc=0
-await "SMPRACE OK: concurrent EL0 churn completed" "$TIMEOUT"
+await "SMPRACE OK: concurrent EL0 churn completed" "$DEMO_BOOT_TIMEOUT"
 case $? in
   0) ;;
   2) echo "FAIL: kernel panic during SMP race stress" >&2; rc=1 ;;
   *) echo "FAIL: timed out waiting for SMPRACE completion" >&2; rc=1 ;;
 esac
 
-# Let the post-demo S4 lock-boundary guards emit before we tear down.
+# Post-demo S4 lock-boundary guards: short assertion after the boot wait, not a
+# second demo-boot budget (real hangs should fail fast).
 [[ "$rc" -eq 0 ]] && { await "S4e OK: network lock boundary stayed balanced" 40 || true; }
 
 stop_qemu

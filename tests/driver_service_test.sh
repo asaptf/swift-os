@@ -4,6 +4,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=tests/lib/bootargs.sh
 source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -11,7 +13,8 @@ DTB="${SMP_DTB:-$ROOT/build/virt-smp4.dtb}"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 SMP_CPU_COUNT="${SMP_CPUS:-4}"
-TIMEOUT="${TIMEOUT:-120}"
+# Poll ceiling for C5 driver-service markers mid demo sequence (role = DEMO_BOOT_TIMEOUT).
+# Override via DEMO_BOOT_TIMEOUT or legacy TIMEOUT.
 C5_INPUT_DEVICE="${C5_INPUT_DEVICE:-1}"
 C5_AUTHORITY_TEST="${C5_AUTHORITY_TEST:-0}"
 
@@ -144,7 +147,7 @@ all_found() {
   return 0
 }
 
-deadline=$((SECONDS + TIMEOUT))
+deadline=$((SECONDS + DEMO_BOOT_TIMEOUT))
 while (( SECONDS < deadline )); do
   if all_found; then
     stop_qemu
