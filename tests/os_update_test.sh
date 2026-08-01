@@ -151,7 +151,16 @@ if to_shell; then
     || fail "older bundle was not refused by anti-rollback"
 
   # 3. Valid newer bundle (version 7) -> staged into slot B and activated.
-  run_until "/bin/swupdate os $URL/good.swsys --insecure" "OS base image staged + activated" 4 30 \
+  #
+  # Unlike the two rejections above, this one does real work: fetch the whole
+  # SWSYS over HTTPS, verify it, and write kernel + base into the inactive slot.
+  # run_until re-types the command on timeout without cancelling the previous
+  # run, so a short per-attempt budget does not retry the work — it queues a
+  # second fetch behind the first on a busy shell and re-does everything. Give
+  # it one generous window instead; the retry here is insurance against a lost
+  # command line, not against slowness. The whole test takes ~35 s locally, so
+  # 120 s still fails fast if the staging genuinely hangs.
+  run_until "/bin/swupdate os $URL/good.swsys --insecure" "OS base image staged + activated" 2 120 \
     || fail "valid bundle did not stage + activate"
   await "version 7) into slot B" 5 || fail "kernel did not record the staged version/slot"
   await "update-store: activated slot B (on trial)" 5 || fail "inactive slot was not activated"
