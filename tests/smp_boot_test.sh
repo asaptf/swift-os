@@ -9,13 +9,16 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=tests/lib/bootargs.sh
 source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
 SMP_CPUS="${SMP_CPUS:-4}"
-TIMEOUT="${TIMEOUT:-90}"
+# Poll ceiling for the full SMP demo + post-run S3/S4 markers (role = DEMO_BOOT_TIMEOUT).
+# Override via DEMO_BOOT_TIMEOUT or legacy TIMEOUT.
 
 if [[ ! "$SMP_CPUS" =~ ^[0-9]+$ ]] || (( 10#$SMP_CPUS < 1 )); then
   echo "FAIL: SMP_CPUS must be a positive integer, got '$SMP_CPUS'." >&2
@@ -178,7 +181,7 @@ all_found() {
 }
 
 found=0
-for _ in $(seq 1 "$((TIMEOUT * 10))"); do
+for _ in $(seq 1 "$((DEMO_BOOT_TIMEOUT * 10))"); do
   if grep -qF "panic:" "$LOG" 2>/dev/null; then
     found=2
     break
@@ -396,7 +399,7 @@ fi
 if [[ "$found" -eq 2 ]]; then
   echo "FAIL: kernel panic seen during SMP boot smoke. Serial log was:" >&2
 else
-  echo "FAIL: not all expected SMP boot markers seen within ${TIMEOUT}s. Serial log was:" >&2
+  echo "FAIL: not all expected SMP boot markers seen within ${DEMO_BOOT_TIMEOUT}s. Serial log was:" >&2
 fi
 echo "---------------------------------------------" >&2
 cat -v "$LOG" >&2

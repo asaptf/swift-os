@@ -16,12 +16,15 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=tests/lib/bootargs.sh
 source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
-TIMEOUT="${TIMEOUT:-120}"
+# Poll ceiling for orphan-reap OK late in the demo sequence (role = DEMO_BOOT_TIMEOUT).
+# Override via DEMO_BOOT_TIMEOUT or legacy TIMEOUT.
 SINGLE_DTB="${SINGLE_DTB:-$ROOT/build/virt.dtb}"
 SMP_DTB="${SMP_DTB:-$ROOT/build/virt-smp4.dtb}"
 DTB_ADDR="${DTB_ADDR:-0x4FF00000}"
@@ -73,7 +76,7 @@ run_once() {  # run_once <smp_cpus>
   "${qemu_args[@]}" >"$log" 2>&1 &
   qp=$!
 
-  local rc=2 deadline=$((SECONDS + TIMEOUT)) failed=""
+  local rc=2 deadline=$((SECONDS + DEMO_BOOT_TIMEOUT)) failed=""
   while (( SECONDS < deadline )); do
     for m in "${FAIL_MARKERS[@]}"; do
       if grep -qF "$m" "$log" 2>/dev/null; then failed="$m"; break; fi

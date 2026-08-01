@@ -15,6 +15,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tests/lib/timeouts.sh
+source "$ROOT/tests/lib/timeouts.sh"
 # shellcheck source=tests/lib/bootargs.sh
 source "$ROOT/tests/lib/bootargs.sh"
 KERNEL="$ROOT/build/kernel.elf"
@@ -26,7 +28,8 @@ else
 fi
 DISK="$ROOT/build/base.img"
 QEMU="${QEMU:-qemu-system-aarch64}"
-TIMEOUT="${TIMEOUT:-120}"
+# Poll ceiling for C5h/LA1 markers emitted mid demo sequence (role = DEMO_BOOT_TIMEOUT).
+# Override via DEMO_BOOT_TIMEOUT or legacy TIMEOUT.
 
 [[ -f "$KERNEL" ]] || { echo "FAIL: $KERNEL missing (make build)" >&2; exit 2; }
 [[ -f "$DISK" ]] || { echo "FAIL: $DISK missing (make base-image)" >&2; exit 2; }
@@ -97,7 +100,7 @@ all_found() {
   return 0
 }
 
-deadline=$((SECONDS + TIMEOUT))
+deadline=$((SECONDS + DEMO_BOOT_TIMEOUT))
 while (( SECONDS < deadline )); do
   if all_found; then
     stop_qemu
