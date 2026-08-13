@@ -1,6 +1,20 @@
 # swift-os
 
+[![ci · fast](https://github.com/asaptf/swift-os/actions/workflows/ci-fast.yml/badge.svg)](https://github.com/asaptf/swift-os/actions/workflows/ci-fast.yml)
+[![Embedded Swift](https://img.shields.io/badge/Embedded%20Swift-aarch64-F05138?logo=swift&logoColor=white)](https://www.swift.org/get-started/embedded/)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Live: swiftos.tech](https://img.shields.io/badge/live-swiftos.tech-2ea44f)](https://swiftos.tech)
+
 **A modern operating system written from scratch in [Embedded Swift](https://www.swift.org/get-started/embedded/) for 64-bit ARM** — a small, capability-isolated, fast-booting core, built by *removing* legacy rather than emulating it. Small enough to trust; real enough to run nginx and Node.js.
+
+<p align="center">
+  <img src="docs/assets/boot.svg" width="746"
+       alt="swift-os booting under QEMU: Embedded Swift kernel bring-up, MMU, SMP, virtio-blk base image, login, then id, ls and ps in a native Swift userland">
+  <br>
+  <sub>A real boot, cold to shell in ~11 s — recorded from
+  <a href="docs/assets/boot.log">this serial log</a>. <code>caps=0x3f</code> is the
+  capability mask, not a uid.</sub>
+</p>
 
 > 🌐 **The page at <https://swiftos.tech> is served by SwiftOS itself.** It runs on a bare-metal Hetzner Cloud ARM VM — nginx, statically linked against our own newlib port, on top of our own kernel, syscall ABI, and in-kernel TCP/IP stack. Not QEMU, not a container.
 
@@ -19,15 +33,22 @@ It is a learning project: intentionally minimal, rough in places, and not produc
 
 ## Try it
 
-```sh
-# See it live — this site is served by SwiftOS itself:
-#   https://swiftos.tech
+**See it live:** <https://swiftos.tech> — the page is served by the OS, so the site
+loading *is* the demo. **In the browser:** [swiftos.tech/try](https://swiftos.tech/try)
+runs the same image under `qemu-system-aarch64` compiled to WebAssembly (until the
+pinned WASM bundle is published it plays a recorded boot).
 
-# Or build and boot it yourself under QEMU (macOS Apple Silicon / Linux):
+**Or boot it yourself** under QEMU on macOS Apple Silicon or Linux:
+
+```sh
 make newlib && make busybox     # one-time: cross-build the libc + bring-up shell
-make build && make run          # boot the kernel under QEMU virt
+make build && make run          # boot the kernel under QEMU virt (exit: Ctrl-A X)
 make test                       # host unit tests + in-QEMU boot assertions
 ```
+
+Log in as `root` / `swordfish`. New here? [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
+walks through the first boot; [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) covers
+what usually goes wrong.
 
 The project is not a Linux clone or a legacy-Unix compatibility exercise. The same minimalist core targets three profiles — **application & AI hosting** (flagship), **embedded/appliance**, and **desktop** (not excluded) — which differ mainly in which optional services and devices are present, not in the kernel.
 
@@ -177,9 +198,25 @@ See [docs/PHILOSOPHY.md](docs/PHILOSOPHY.md) for the full project stance.
 ## Documentation
 
 The public documentation starts at [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
-That map now includes role-based paths for first-time operators, deployment
-owners, administrators, application developers, package maintainers, service
-operators, AI hosting operators, support engineers, and security reviewers.
+That map includes role-based paths for first-time operators, deployment owners,
+administrators, application developers, package maintainers, service operators,
+AI hosting operators, support engineers, and security reviewers.
+
+**Start here:**
+
+| If you want to… | Read |
+| --- | --- |
+| boot it and look around | [Getting Started](docs/GETTING_STARTED.md) · [Concepts](docs/CONCEPTS.md) |
+| understand the design | [Architecture](docs/ARCHITECTURE.md) · [Philosophy](docs/PHILOSOPHY.md) |
+| write code for it | [Developer Guide](docs/DEVELOPER_GUIDE.md) · [API Reference](docs/API_REFERENCE.md) |
+| port an existing program | [Porting Guide](docs/PORTING_GUIDE.md) · [ports/](ports/README.md) |
+| run the tests | [Testing Guide](docs/TESTING_GUIDE.md) |
+| review the security model | [Security Guide](docs/SECURITY_GUIDE.md) · [Capabilities](docs/CAPABILITIES.md) |
+| fix a broken build or boot | [Troubleshooting](docs/TROUBLESHOOTING.md) · [FAQ](docs/FAQ.md) |
+
+<details>
+<summary><b>Full reference index</b> — every guide, from operations and packaging to
+networking, AI hosting, and on-disk formats</summary>
 
 - [Getting Started](docs/GETTING_STARTED.md): build, boot, log in, run commands,
   and attach QEMU networking.
@@ -286,6 +323,8 @@ operators, AI hosting operators, support engineers, and security reviewers.
   engineering session.
 - [Hetzner Deployment](docs/HETZNER_DEPLOYMENT.md): bare-metal bring-up handoff
   for a Hetzner Cloud ARM (CAX) VM running SwiftOS as the actual OS.
+
+</details>
 
 ## Architecture
 
@@ -536,6 +575,37 @@ high-pps optimizations, and the actual service-ization.
 
 These boundaries are not accidental omissions. They keep the kernel surface
 small enough to measure, test, and trust.
+
+## Contributing
+
+Issues and pull requests are welcome — start with the
+[good first issues][gfi] and read [CONTRIBUTING.md](CONTRIBUTING.md) first: the
+project has a few hard rules (Swift by default, no new legacy surface, every
+change ships an executable check) that are easier to read than to rediscover in
+review. Ports of existing programs and bring-up on new hardware — Raspberry Pi in
+particular — are the most useful contributions right now.
+
+Found a security problem? Please don't open a public issue — see
+[SECURITY.md](SECURITY.md).
+
+[gfi]: https://github.com/asaptf/swift-os/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22
+
+## More from the author
+
+swift-os is one strand of a wider argument that Swift belongs in systems and AI
+work — that *AI doesn't have to speak Python*. The OS itself makes the case twice:
+the kernel is Swift, and `/bin/llmd` serves transformer inference written in Swift
+on top of it.
+
+- **[How LLMs Work: From Zero to Your Own Transformer](https://www.amazon.com/dp/B0H7BPJLHC)**
+  — building an LLM from scratch, with every example in pure Swift + Apple MLX
+  ([edición en español](https://www.amazon.com/dp/B0H7C1D3NT)).
+- **[swift-extract](https://github.com/asaptf/swift-extract)** — typed, on-device
+  structured extraction from documents and photos in Swift.
+- **[Why the AI Industry Still Pays a "Python Tax"](https://hackernoon.com/why-the-ai-industry-still-pays-a-python-tax)**
+  and **[How Modern Voice-to-Voice AI Models Work](https://hackernoon.com/how-modern-voice-to-voice-ai-models-work)**
+  — the essays behind the thesis.
+- Everything else: **[github.com/asaptf](https://github.com/asaptf)**.
 
 ## License
 

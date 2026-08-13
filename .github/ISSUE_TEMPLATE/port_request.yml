@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Port a program / bring up a board
+description: Propose porting an existing program to the swift-os ABI, or bringing up new hardware.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ports are the most useful contribution to this project: each one is direct
+        evidence that the syscall ABI is real. Read
+        [docs/PORTING_GUIDE.md](../../blob/main/docs/PORTING_GUIDE.md) and
+        [ports/README.md](../../blob/main/ports/README.md) first — the constraints
+        (static linking only, no Linux ABI, no dynamic loader) rule some programs
+        out before any work starts.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of port
+      options:
+        - a program / library (cross-built against the swift-os ABI)
+        - a native Swift userland utility (replacing a busybox tool)
+        - new hardware / board bring-up
+    validations:
+      required: true
+
+  - type: input
+    id: target
+    attributes:
+      label: What exactly
+      placeholder: "redis 7.x / a native Swift `uname` / Raspberry Pi 5"
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it's worth having
+      description: >
+        What it proves or unblocks. For the AI-hosting and appliance profiles, say
+        which one it serves.
+    validations:
+      required: true
+
+  - type: textarea
+    id: requirements
+    attributes:
+      label: What it needs from the OS
+      description: >
+        Syscalls, libc surface, threading, filesystem behaviour, devices. Name
+        anything you already know is missing — that list is usually the real work.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints check
+      options:
+        - label: It can be built as a **static** binary (no dynamic loader).
+        - label: It does not require the **Linux** syscall ABI.
+        - label: It builds for **aarch64**.
+        - label: Its license is compatible and stated (and it is not GPL code being mixed into our Apache-2.0 sources).
+
+  - type: checkboxes
+    id: offer
+    attributes:
+      label: Are you offering to do it?
+      options:
+        - label: I'd like to work on this myself.

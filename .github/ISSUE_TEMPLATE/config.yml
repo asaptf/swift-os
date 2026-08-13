@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/asaptf/swift-os/blob/main/docs/DOCUMENTATION.md
+    about: Role-based guides — getting started, architecture, operations, porting, security.
+  - name: Try it / read about it
+    url: https://swiftos.tech
+    about: The project site, served by SwiftOS itself on bare-metal ARM.
+  - name: Report a security vulnerability
+    url: https://github.com/asaptf/swift-os/security/advisories/new
+    about: Private disclosure. Please do not file security problems as public issues.

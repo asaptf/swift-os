@@ -1,0 +1,147 @@
+Hello from Swift kernel
+swift-os M0: boot skeleton up on QEMU virt (aarch64, EL1)
+swift-os M1: runtime and memory init
+boot: selftest skipped (selftest=1 to enable)
+M9 platform: ram 0x0000000040000000 size 0x0000000010000000
+M9 platform: uart 0x0000000009000000 irq 33 gic 0x0000000008000000 / 0x0000000008010000
+M9 platform: virtio-mmio 0x000000000A000000 x32
+M9 OK: hardware discovered from device tree
+swift-os M3: enabling MMU
+M3 probe: page tables initialized
+M3 probe: translation registers configured
+M3 probe: MMU enable returned
+M4.5 pmm: 61022 free frames (61054 low)
+M1 probe: raw heap allocation ok
+M1 probe: Swift raw allocation hook ok
+M1 probe: Swift class allocation ok
+M1 OK: heap, ARC class, exception vectors
+heap used: 0x0000000000000060
+M3 OK: MMU enabled and page map/unmap works
+swift-os M4.5: per-process address spaces
+M4.5 AS: per-process isolation OK
+swift-os M2: enabling GIC and generic timer
+M2 GIC: GICv2 dist 0x0000000008000000 cpu 0x0000000008010000
+[0] [I] timer: tick rate (Hz) detail=100
+[0] [I] platform: M9 OK: hardware discovered from device tree
+[0] [I] smp: S0 OK: foundations ready
+[0] [I] smp: S0b OK: atomics and barriers ready
+[0] [I] smp: S0d OK: per-CPU state ready detail=8
+[0] [I] smp: S0e OK: secondary park mailbox ready
+[0] [I] smp: S0f OK: CPU topology ready detail=1
+[0] [I] smp: S0g OK: PSCI discovery ready
+[0] [I] smp: S2a OK: per-CPU timer heartbeat ready detail=1
+[0] [I] smp: S2a OK: scheduler boundary held detail=1
+[0] [I] smp: S1 CPU online
+[0] [I] smp: S1 OK: secondary CPUs online detail=1
+[0] [I] log: L0 kernel logger active
+[0] [I] log: level filtering active (min INFO)
+[0] [I] log: source filtering active
+[0] [E] log_filter: source override allows error
+[0] [I] log: sink indirection active
+[0] [I] log: sink capability hook active
+[0] [I] sched: M4.5 sched: scheduler online detail=4
+[0] [I] smp: S2c OK: kernel scheduler owner ready detail=1
+[0] [I] smp: S2a OK: scheduler owner ready detail=1
+[0] [I] smp: S2b OK: process scheduler context scaffold ready detail=8
+[0] [I] smp: S2d OK: process run queue scaffold ready detail=8
+[0] [I] smp: S2e OK: dormant process scheduler CPUs published detail=8
+[0] [I] smp: S2f OK: process dispatch telemetry ready detail=8
+[0] [I] smp: S2h OK: secondary EL0 gate ready detail=8
+[0] [I] smp: S3a OK: address-space CPU mask scaffold ready detail=8
+[0] [I] smp: S3b OK: GIC SGI IPI substrate ready detail=1
+[0] [I] smp: S3c OK: TLB shootdown IPI scaffold ready detail=1
+[0] [I] smp: S3d OK: address-space TLB flush facade ready detail=8
+[0] [I] smp: S4a OK: PMM lock boundary ready detail=168
+M12a security: boot principal console session 1
+M11b: virtio-blk disk, capacity 99615 sectors
+[0] [I] disk: M11b OK: sector 0 read from disk, SWOSBASE magic verified
+D0: data device, 32768 sectors
+D0 OK: data disk persistent, boot count 1
+SYS_RANDOM: source jitter-entropy DRBG (no virtio-rng device)
+[0] [I] rng: SYS_RANDOM source: jitter-entropy DRBG detail=1
+[0] [I] smp: S4d OK: package-store lock boundary ready detail=2
+[0] [I] vfs: base image signature verified (ed25519)
+[0] [I] vfs: M11c: read-only base mounted from disk
+V2c root: uuid=16683273807873450075:10387039648769685996
+D1 OK: datafs mounted at /data
+D2 OK: data sync path ready, flush count 3
+[0] [I] smp: S4b OK: VFS lock boundary ready detail=2
+[0] [I] smp: S4c OK: kernel heap lock boundary ready detail=82
+net-dhcp OK: lease 10.0.2.15 gateway 10.0.2.2 dns 10.0.2.3
+net: IPv6 link-local configured (EUI-64 from MAC)
+net-a: virtio-net up, MAC 52:54:00:12:34:56
+net-a: ARP reply, 10.0.2.2 is at 52:55:0a:00:02:02
+net-a OK: ICMP echo reply from 10.0.2.2
+[2] [I] smp: S4e OK: network lock boundary ready detail=14
+[2] [I] smp: S5a OK: per-CPU utilization counters ready detail=1
+USB1: no xHCI controller found
+[2] [I] smp: S5g OK: default multi-CPU EL0 placement enabled detail=1
+swift-os M7: interactive tty + signals
+M11d: exec loaded from disk /bin/ttydemo
+M7 tty: type a line then Enter
+tty-line
+you typed: tty-line
+M7 tty: running; press Ctrl-C to interrupt
+^C
+M7 OK: foreground interrupted by Ctrl-C (SIGINT), status 130
+swift-os M12c: starting swos-init
+M11d: exec loaded from disk /bin/swos-init
+swos-init: starting configured services
+M11d: exec loaded from disk /bin/swupdate
+swupdate: seed: seeded /data/www/current from baked default
+swos-init: started inputd pid 2
+swos-init: started sshd pid 3
+swos-init: started crond pid 4
+swos-init: starting console-login session
+M11d: exec loaded from disk /bin/inputd
+M11d: exec loaded from disk /bin/sshd
+M11d: exec loaded from disk /bin/crond
+crond: starting
+crond: loaded 0 job(s)
+M11d: exec loaded from disk /bin/console-login
+
+swift-os login: inputd: no virtio-input device; exiting
+sshd: listening on 22 (session exec preflight)
+root
+Password: 
+Welcome to swift-os, root
+session: principal=1 session=1 caps=63
+M12c: shell ready
+M11d: exec loaded from disk /bin/busybox
+
+
+BusyBox v1.38.0 (2026-07-29 18:48:33 CEST) built-in shell (ash)
+
+# id
+M11d: exec loaded from disk /bin/id
+principal=1(root) session=1 caps=0x3f
+# ls -l /
+M11d: exec loaded from disk /bin/busybox
+drwxr-xr-x    1 root     root             0 bin
+drwxr-xr-x    1 root     root             0 data
+drwxr-xr-x    1 root     root             0 dev
+drwxr-xr-x    1 root     root             0 etc
+-rw-r--r--    1 root     root            31 hello.txt
+drwxr-xr-x    1 root     root             0 models
+drwxr-xr-x    1 root     root             0 packages
+-rw-r--r--    1 root     root            27 readme.txt
+drwxr-xr-x    1 root     root             0 sbin
+drwxr-xr-x    1 root     root             0 tmp
+drwxr-xr-x    1 root     root             0 usr
+drwxr-xr-x    1 root     root             0 www
+# ps
+M11d: exec loaded from disk /bin/ps
+ PID PPID STATE CMD
+   1    0 BLOCK swos-init
+   2    5 RUN   ps
+   3    1 READY sshd
+   4    1 BLOCK crond
+   5    1 BLOCK sh
+# date
+M11d: exec loaded from disk /bin/date
+2026-08-13 10:04:37 UTC
+# cat /etc/motd
+M11d: exec loaded from disk /bin/busybox
+Welcome to swift-os.
+# 
+# 
