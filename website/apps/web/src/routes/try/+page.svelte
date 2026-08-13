@@ -6,22 +6,38 @@
 	import Footer from '$lib/components/Footer.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import Seo from '$lib/components/Seo.svelte';
+	import { liveVmConfigured } from '$lib/qemu/config';
+
+	// Until a pinned WASM bundle is published, this page plays a recorded boot —
+	// the copy has to say so rather than promise a live VM.
+	const live = liveVmConfigured();
 </script>
 
 <Seo
 	title="Try swift-os in your browser"
-	description="Boot a real swift-os AArch64 VM directly in your browser — qemu-system-aarch64 compiled to WebAssembly. No install, no backend."
+	description="Boot swift-os in your browser — qemu-system-aarch64 compiled to WebAssembly, emulating the same AArch64 machine as a local run. No install, no backend."
 />
 
 <main id="main" class="wrap wrap-wide" style="padding-block:var(--sp-8)">
 	<header style="max-width:48rem;margin-bottom:var(--sp-6)" use:reveal>
 		<span class="eyebrow">Try it · in your browser</span>
 		<h1 style="margin-top:1rem">Boot swift-os — no install.</h1>
-		<p class="lead" style="margin-top:1rem">
-			This runs <code>qemu-system-aarch64</code> compiled to <span class="gloss" data-gloss="embedded swift" use:gloss>WebAssembly</span>,
-			emulating the same <code>-M virt</code> machine as <code>make run</code> — a genuine boot to a Swift login
-			prompt, entirely client-side. Log in with <code>root</code> / <code>swordfish</code>.
-		</p>
+		{#if live}
+			<p class="lead" style="margin-top:1rem">
+				This runs <code>qemu-system-aarch64</code> compiled to <span class="gloss" data-gloss="embedded swift" use:gloss>WebAssembly</span>,
+				emulating the same <code>-M virt</code> machine as <code>make run</code> — a genuine boot to a Swift login
+				prompt, entirely client-side. Log in with <code>root</code> / <code>swordfish</code>.
+			</p>
+		{:else}
+			<p class="lead" style="margin-top:1rem">
+				The in-browser VM runs <code>qemu-system-aarch64</code> compiled to
+				<span class="gloss" data-gloss="embedded swift" use:gloss>WebAssembly</span>, emulating the same
+				<code>-M virt</code> machine as <code>make run</code>. The pinned WASM bundle is not published yet, so
+				this page currently plays a <strong>recording</strong> of that boot and then hands off to a simulated
+				shell. To drive the real thing today, <a href="/quickstart">run it locally</a> — it is three
+				<code>make</code> commands.
+			</p>
+		{/if}
 	</header>
 
 	<div use:reveal>
@@ -33,7 +49,7 @@
 	</div>
 
 	<section class="section-sm">
-		<div class="section-head" use:reveal><span class="eyebrow">How this works</span><h2 class="h3" style="margin-top:.6rem">A real VM, not a recording.</h2></div>
+		<div class="section-head" use:reveal><span class="eyebrow">How this works</span><h2 class="h3" style="margin-top:.6rem">{live ? 'A real VM, not a recording.' : 'How the in-browser VM works.'}</h2></div>
 		<div class="feature-grid" use:reveal>
 			<div class="feature">
 				<div class="f-ico"><Icon name="cube" size={22} /></div>

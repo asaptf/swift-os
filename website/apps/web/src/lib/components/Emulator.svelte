@@ -15,7 +15,9 @@
 	let fit: FitAddon | undefined;
 	let mode = $state<Mode>('idle');
 	let status = $state('');
-	let canLive = $state(false);
+	// Seeded from build-time env so SSR renders the same branch the client will:
+	// the gate must not promise a live VM the published bundle can't deliver.
+	let canLive = $state(liveVmConfigured());
 	let reason = $state('');
 	let bootHandle: BootHandle | null = null;
 	let shellDispose: (() => void) | null = null;
@@ -135,7 +137,9 @@
 						<div class="emu-spin" aria-hidden="true"></div>
 						<p class="mono dim" style="font-size:var(--fs-sm)">{status}</p>
 					{:else}
-						<span class="proof-pill"><span class="live"></span> Boots a real swift-os VM</span>
+						<span class="proof-pill"><span class="live"></span>
+							{canLive ? 'Boots a real swift-os VM' : 'Recorded boot — the live VM is landing'}
+						</span>
 						<h3 style="margin-top:1rem">Boot swift-os in your browser.</h3>
 						{#if canLive}
 							<p class="muted" style="font-size:var(--fs-sm);max-width:34rem;margin-top:.5rem">
@@ -149,7 +153,7 @@
 						{:else}
 							<p class="muted" style="font-size:var(--fs-sm);max-width:34rem;margin-top:.5rem">{reason}</p>
 							<div class="emu-actions">
-								<button class="btn btn-primary" onclick={startRecording}><Icon name="play" size={18} /> Launch swift-os</button>
+								<button class="btn btn-primary" onclick={startRecording}><Icon name="play" size={18} /> Watch the recorded boot</button>
 							</div>
 						{/if}
 					{/if}
