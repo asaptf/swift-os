@@ -16,12 +16,25 @@ testable correctness, achieved by **removing legacy** rather than emulating it. 
 
 ## Hard architectural decisions (do not re-litigate without asking)
 
+- **Language: Swift everywhere, by default.** Kernel, userland utilities and host tooling are
+  Embedded Swift (host Swift for build tools). This is a first principle, not a preference. C or
+  assembly requires a strong, documented justification, limited to: third-party code we don't own
+  (busybox, the newlib port); low-level bridges Swift cannot express (volatile MMIO, the syscall /
+  runtime shims, boot and exception assembly); or a measured toolchain limitation recorded in
+  `docs/NOTES.md`. Prefer rewriting existing C in Swift over extending it.
 - **Kernel language:** Embedded Swift — freestanding, no Foundation, no full stdlib.
   - Value types + `Unsafe*` pointers at the low level.
   - `~Copyable` structs with `deinit` for resource ownership.
   - Classes only after the heap is up, and sparingly (ARC has a cost).
-- **Isolation:** real MMU-based isolation; one address space per process. Single core (no SMP) at the start. SMP support is a planned post-M13 remediation series (S0–S5); see `docs/RISK_REMEDIATION_ROADMAP.md`.
-- **Filesystem:** two-tier, no journaling. Read-only packed base + RAM tmpfs scratch. Data loss on reboot is acceptable by design.
+- **Isolation:** real MMU-based isolation; one address space per process. **SMP is delivered**
+  (S0–S5: per-CPU scheduling, cross-CPU TLB shootdown, spinlock-protected kernel state; tested at
+  `-smp 4`), though `make run` still defaults to one CPU for speed. Remaining concurrency work is in
+  `docs/RISK_REMEDIATION_ROADMAP.md`.
+- **Filesystem:** three-tier, no journaling. An immutable signed packed read-only base + a RAM tmpfs
+  scratch tier (data loss on reboot is acceptable for both) + a persistent, `fsync`-durable `/data`
+  tier (datafs on its own virtio-blk disk) for state that must survive reboot — durable enough to
+  back SQLite. Crash-safety relies on honest `fsync` plus the application's own journaling, not on
+  FS journaling.
 - **No Linux ABI.** Our own POSIX-like syscall surface; tools are recompiled.
 - **Static linking only.** No dynamic loader.
 - **libc:** newlib port for bring-up; musl possible later.
@@ -59,3 +72,8 @@ foreclosing these. See `docs/ARCHITECTURE.md`.
 - All docs and comments in **English**.
 - Match surrounding code style; comment density matches neighbors.
 - No dead/half files. Clear commits per milestone.
+- **License header on every new source file we author:** `// SPDX-License-Identifier: Apache-2.0`
+  for Swift/C/headers/assembly, `# SPDX-License-Identifier: Apache-2.0` for shell, Make and linker
+  scripts. Vendored third-party files keep their upstream headers untouched.
+- Contribution rules for humans live in `CONTRIBUTING.md`; security reports go through
+  `SECURITY.md` (never a public issue).
